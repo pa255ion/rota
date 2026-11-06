@@ -1,0 +1,7 @@
+# Pad 2 at layer 4 (M7 step 7.12; Makefile ci-arty-snes, ci-snes; ROM
+# joy2.sfc): its two bytes at Snes.Machine.pad2Addr (160000h, low first),
+# as the PS's relay writes the key word's bits 16-27 on a change (side
+# track K's keys_hi): pad 2 = 0A5h, before joy2.s reads it (after 4
+# frames; wait counts microseconds). The picture: green.
+wait 20000
+bytes 0x160000 A500

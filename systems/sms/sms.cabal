@@ -1,0 +1,185 @@
+cabal-version:      2.4
+name:               sms
+version:            0.1.0.0
+synopsis:           Sega Master System (NTSC), on the Game Gear's code (M6)
+license:            BSD-2-Clause
+build-type:         Simple
+
+-- One copy of the shared parts (the user, 2026-10-11): the Z80 is the z80
+-- package, the VDP, PSG, mappers and the SMS mode are the gg package's;
+-- this package adds the Master System's own parts
+-- (docs/systems/mastersystem.md).
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    Sms.Header
+    Sms.Spec.Fm
+    Sms.Spec.FmUnit
+    Sms.SpecFast.Fm
+    Sms.SpecFast.FmUnit
+    Sms.Fm
+    Sms.Display
+    Sms.Machine
+    Sms.ArtyTop
+    Sms.Top
+  ghc-options:      -O2
+  build-depends:
+    gg,
+    z80,
+    platform,
+    bytestring,
+    vector
+
+-- The simulator with the FM unit: gg-run's (Gg.RunMain) plus
+-- Sms.Spec.FmUnit for --sms (--no-fm: none).
+executable sms-run
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Run.hs
+  ghc-options:      -O2 -rtsopts
+  build-depends:
+    sms,
+    gg
+
+-- Side track Q (PLAN.md Q.7): the fast version (Gg.SpecFast) against the
+-- reference model, instruction by instruction, on both consoles
+-- (EMU_FULL_TESTS=1: longer, ZEXDOC's start, the user's games).
+test-suite sms-specfast
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          SpecFast.hs
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N4 -M2g" -O2
+  build-depends:
+    sms,
+    gg,
+    z80,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit
+
+-- Side track Q (PLAN.md Q.7): where the reference model's time goes.
+executable sms-fast-bench
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          FastBench.hs
+  ghc-options:      -O2 -rtsopts
+  build-depends:
+    sms,
+    gg,
+    bytestring
+
+-- Layer 0 (docs/TESTING.md): our SMS regression ROMs (build/sms/asm/, make
+-- sms-asm) on the reference model in Master System mode, and the ROM
+-- headers.
+test-suite sms-spec
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  other-modules:
+    FmOracle
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    process,
+    sms,
+    gg,
+    z80,
+    bytestring,
+    directory,
+    filepath,
+    vector,
+    tasty,
+    tasty-hunit
+
+-- Layer 2 (step 6.5): the YM2413 in Clash (Sms.Fm) in lockstep with
+-- Sms.Spec.Fm on sms-spec's random register programs.
+test-suite sms-lockstep
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Lockstep.hs
+  other-modules:
+    FmOracle
+  -- -M4g: a shared machine (CLAUDE.md, "Parallel sessions")
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M4g" -O2
+  build-depends:
+    sms,
+    process,
+    bytestring,
+    directory,
+    filepath,
+    vector,
+    tasty,
+    tasty-hunit
+
+-- Side track Q (PLAN.md Q.5): the Game Gear's and Master System's
+-- reference model (with the FM unit) behind a C ABI, for the desktop
+-- emulator's Zig front end (platform/desktop/; make desktop).
+foreign-library sms-desktop
+  type:             native-shared
+  default-language: Haskell2010
+  hs-source-dirs:   desktop
+  other-modules:    Sms.Desktop
+  ghc-options:      -O2 -Wall
+  build-depends:
+    platform,
+    base,
+    sms,
+    gg,
+    z80,
+    bytestring,
+    vector

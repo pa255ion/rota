@@ -1,0 +1,20 @@
+# Battery saves at layer 4 (M7 step 7.11; Makefile ci-snes, ci-arty-snes;
+# ROM save.sfc, LoROM with 8 KiB of SRAM): as the PS app does it
+# (platform/ps/save.zig; Snes.Save's link map), the Game Gear's test. While
+# the machine is held, the save goes into SRAM: "SAVE" and a boot count of
+# 29h at the start, and a marker at the end of the 8 KiB. The game runs
+# (save.s counts up to 2Ah; wait counts microseconds); a write while it
+# runs (not held) is ignored. Then the read back through SRAM's second
+# port: both places, the bytes compared with save.hex (--expect-ps-hex);
+# PS_IN ends with the dirty flag (bit 6) set, system 9, and the last byte
+# read (0Fh) on the byte channel.
+hold 1
+bytes 0x100000 534156452900
+bytes 0x101FF0 000102030405060708090A0B0C0D0E0F
+hold 0
+wait 200000
+bytes 0x100005 FF
+bytes 0x140000 01
+bytes 0x120000 000000000000
+bytes 0x121FF0 00000000000000000000000000000000
+bytes 0x140000 00

@@ -1,0 +1,15 @@
+# FluBBa's SMS VDP Test 1.31: "SMS VDP Test" from the menu (button 1),
+# then button 1 for each next page, every 250 frames (gg-run --input).
+# Result pages are on screen in the frame before each press: 1199, 1449,
+# 1699, 1949, 2199.
+0    -
+220  1
+226  -
+1200 1
+1206 -
+1450 1
+1456 -
+1700 1
+1706 -
+1950 1
+1956 -

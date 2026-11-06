@@ -1,0 +1,178 @@
+cabal-version:      2.4
+name:               gg
+version:            0.1.0.0
+synopsis:           Sega Game Gear (NTSC) reference model (later the Clash core)
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    Gg.Spec
+    Gg.Spec.Vdp
+    Gg.SpecFast
+    Gg.SpecFast.Vdp
+    Gg.StateTable
+    Gg.StateTap
+    Gg.Hooks
+    Gg.Spec.Psg
+    Gg.Screen
+    Gg.Input
+    Gg.Text
+    Gg.Psg
+    Gg.Vdp
+    Gg.Core
+    Gg.Display
+    Gg.Machine
+    Gg.Audio
+    Gg.Save
+    Gg.RomPort
+    Gg.ArtyTop
+    Gg.Top
+    Gg.RunMain
+  ghc-options:      -O2
+  build-depends:
+    z80,
+    platform,
+    bytestring,
+    vector,
+    JuicyPixels,
+    directory,
+    filepath
+
+-- The built-in cartridge's block RAM images (step 5.8): gg-image ROM DIR.
+executable gg-image
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Image.hs
+  build-depends:
+    gg,
+    bytestring,
+    filepath
+
+-- The simulator: a ROM on the reference model, frames to PNG, audio to WAV.
+executable gg-run
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Run.hs
+  ghc-options:      -O2 -rtsopts
+  build-depends:
+    gg,
+    z80,
+    bytestring,
+    directory,
+    filepath,
+    vector
+
+-- Layer 0 (docs/TESTING.md): the reference model on our own regression
+-- ROMs (build/gg/asm/, assembled by make gg-asm).
+test-suite gg-spec
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  other-modules:
+    Units
+    SpecRestore
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    vector,
+    gg,
+    z80,
+    bytestring,
+    directory,
+    filepath,
+    process,
+    tasty,
+    tasty-hunit,
+    tasty-golden
+
+-- Layer 2 (step 5.6): the Clash units in lockstep with their reference
+-- models.
+test-suite gg-lockstep
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Lockstep.hs
+  -- -M4g: a shared machine (CLAUDE.md, "Parallel sessions"); a leak here
+  -- fails the suite instead of taking the RAM (the suite peaks near 1.3 GB)
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M4g" -O2
+  build-depends:
+    gg,
+    z80,
+    bytestring,
+    directory,
+    filepath,
+    vector,
+    tasty,
+    tasty-hunit
+
+-- Layer 2, side track N (PLAN.md N.2): the save-state hooks in Clash
+-- simulation ("Gg.Hooks" around the core): a save read out, a load
+-- through the CPU (the restore routine from build/host/gg-restore).
+test-suite gg-savestate
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          SaveState.hs
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M8g"
+  build-depends:
+    gg,
+    z80,
+    platform,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    process,
+    tasty,
+    tasty-hunit

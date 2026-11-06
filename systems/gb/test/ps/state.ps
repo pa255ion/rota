@@ -1,0 +1,62 @@
+# Save states (side track L, PLAN.md L.6, L.6c): what the PS app does with the
+# Game Boy's hooks, on build/gb/asm/state_fill.gb (systems/gb/test/asm/
+# state_fill.asm), played on the PS link by the Arty's harness (ci-speed's
+# neighbour, ci-savestate; format: platform/sim/ps.zig). Gb.Loader's map:
+# the state mode 0x140050, the state's write window 0x150000 and read
+# window 0x160000, the save control 0x140000 (the byte channel).
+#
+# the ROM fills VRAM, WRAM and HRAM (about 14 ms), then counts
+wait 30000
+# the menu pauses the game; reads on the byte channel; freeze
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 100
+# expected (test/ps/state.hex): the status (frozen, the state table's
+# 0x220 bytes as 20 02, version 3), VRAM 0x8000-0x8003 (low byte XOR 5A),
+# HRAM 0xFF80-0xFF81 (XOR C3), WRAM 0xC000-0xC001 (low + high byte)
+bytes 0x161F00 00000000
+bytes 0x162000 00000000
+bytes 0x161000 0000
+bytes 0x168000 0000
+# a byte written into VRAM while frozen, read back: 11
+bytes 0x152000 11
+bytes 0x162000 00
+# thawed: the game goes on
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 2000
+# a load through the CPU (L.6c), in the PS's order: paused, frozen (where
+# a state can be taken), then held (the core's reset, frozen or not; the
+# status still 1), HRAM 0xFF80 cleared, a routine in the ROM overlay
+# (0x6000 + its address 0x0100: LD A,0x42; LD (0xD000),A; JP 0x0150; its
+# last byte at 0x0107: the end address, then the arm), let go
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 100
+hold 1
+wait 10
+bytes 0x161F00 00
+bytes 0x151000 00
+bytes 0x156100 3e42ea00d0c35001
+bytes 0x151F10 070101
+hold 0
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+# the routine ran (WRAM 0xD000, outside the ROM's fills: 42), and the
+# overlay ended there: the game itself ran again from 0x0150 and filled
+# HRAM anew (0xFF80: 43)
+wait 30000
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 100
+bytes 0x169000 00
+bytes 0x161000 00
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 2000

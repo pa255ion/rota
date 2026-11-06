@@ -1,0 +1,29 @@
+# Haskell
+dist-newstyle/
+.ghc.environment.*
+cabal.project.local*
+
+# Generated output (Clash, Verilator, Vivado)
+build/
+*.jou
+*.log
+.Xil/
+
+# ROMs / BIOS images are never committed (fetched by tools/fetch-roms.sh)
+roms/
+**/roms/
+
+# Nix
+result
+result-*
+.direnv/
+
+# Local reference material (vendor manuals, schematics): kept out of git
+local/
+
+# Zig
+.zig-cache/
+zig-out/
+
+# Claude Code worktrees for parallel sessions (CLAUDE.md, "Parallel sessions")
+.claude/worktrees/

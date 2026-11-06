@@ -1,0 +1,11 @@
+# gg-run --commands (side track Q, Q.8), make test-desktop: a save state
+# loaded replays the same frames (the two hashes must match)
+frames 100
+save build/desktop/gg-cmd.state
+input 1R
+frames 50
+hash
+load build/desktop/gg-cmd.state
+frames 50
+hash
+quit

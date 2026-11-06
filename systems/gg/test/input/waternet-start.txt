@@ -1,0 +1,20 @@
+# Waternet: main menu -> mode (rotate) -> difficulty (normal) -> level 1,
+# then a few moves (gg-run --input). Waternet's README: button 1 / Start
+# confirm (and rotate in a game), button 2 goes back.
+0   -
+320 S
+326 -
+420 1
+426 -
+520 S
+526 -
+660 1
+666 -
+800 R
+806 -
+830 1
+836 -
+860 D
+866 -
+890 1
+896 -

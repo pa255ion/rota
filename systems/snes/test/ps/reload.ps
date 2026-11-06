@@ -1,0 +1,13 @@
+# A load through the PS link, as the SD menu does it (M7 step 7.10; Makefile
+# ci-arty-snes, the krom picture's ROM in the harness's DDR): part way into
+# frame 3 (wait counts microseconds, a frame is 16.7 ms) the PS holds the
+# machine, writes the cartridge word (LoROM, 32 KiB: bytes 0C 00 at
+# Snes.Machine.cartAddr; 16 bits since step 7.11) and lets go. The machine must start afresh on the
+# ROM: its picture once faded in (frame 20 on, every frame the same) is the
+# golden; PS_IN must say system 9.
+wait 44000
+hold 1
+wait 200
+bytes 0 0C00
+wait 100
+hold 0

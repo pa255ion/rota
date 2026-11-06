@@ -1,0 +1,50 @@
+# Save states at layer 4 (side track N, N.2; Makefile ci-savestate-gg;
+# ROM save.gg on the Arty, whose top has the hooks): as the PS app does it
+# with Gg.Hooks's link map (the state mode 0x140050, the state's write
+# window 0x150000 and read window 0x160000, the save control 0x140000 for
+# the byte channel). save.gg counts its boots in cartridge RAM (8004h).
+#
+# loaded with a boot count of 29h; the game counts it to 2Ah
+hold 1
+bytes 0x100000 534156452900
+hold 0
+wait 20000
+# the menu pauses the game; reads on the byte channel; freeze (within a
+# frame: the core runs on to a moment a state can be taken)
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 20000
+# expected (test/ps/state.hex): the status (frozen, the table's 0x140
+# bytes as 40 01, version 1), the boot count (2A), a RAM byte written and
+# read back through the window (77)
+bytes 0x161F00 00000000
+bytes 0x120004 00
+bytes 0x159000 77
+bytes 0x169000 00
+# a load through the CPU: held (the core's reset; frozen at once: 01),
+# a routine in the ROM overlay (its address 0000h: cartridge RAM at 8000h,
+# 42h at 8010h, which save.gg never touches, the ROM back, JP 0000h; its
+# last byte at 0011h: the end address, then the arm), let go
+hold 1
+wait 10
+bytes 0x161F00 00
+bytes 0x156000 3E0832FCFF3E423210803E0032FCFFC30000
+bytes 0x151F10 110001
+hold 0
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 20000
+# the routine ran (42h at 8010h), and the overlay ended there: the game
+# itself booted again from its ROM (the count 2Bh)
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 20000
+bytes 0x120010 00
+bytes 0x120004 00
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 2000

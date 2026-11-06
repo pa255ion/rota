@@ -1,0 +1,19 @@
+# Battery saves at layer 4 (M5 step 5.10; Makefile ci-gg, ci-arty-gg; ROM
+# save.gg): as the PS app does it (platform/ps/save.zig; Gg.Save's link
+# map). While the machine is held, the save goes into cartridge RAM:
+# "SAVE" and a boot count of 29h at the start, and a marker at the end of
+# the 32 KiB (the second bank's last bytes). The game runs (save.s counts
+# up to 2Ah); a write while it runs (not held) is ignored. Then the read
+# back through the second port: both places, the bytes compared with
+# save.hex (--expect-ps-hex); PS_IN ends with the dirty flag (bit 6) set
+# and the last byte read (0Fh) on the byte channel.
+hold 1
+bytes 0x100000 534156452900
+bytes 0x107FF0 000102030405060708090A0B0C0D0E0F
+hold 0
+wait 20000
+bytes 0x100005 FF
+bytes 0x140000 01
+bytes 0x120000 000000000000
+bytes 0x127FF0 00000000000000000000000000000000
+bytes 0x140000 00

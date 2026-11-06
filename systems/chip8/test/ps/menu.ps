@@ -1,0 +1,18 @@
+# A ROM menu screen as the PS app draws it (platform/ps/menu.zig), played
+# on the PS link by the Verilator harness (make sim ... SIM_PS=this file)
+# and rendered by Platform.Sim.Overlay for the golden
+# (test/golden/vga/menu-overlay.png). Format: Platform.Sim.Overlay.
+bar 0 1 ROM menu - CHIP-8
+text 1 1 /CHIP8
+text 3 2 timendus/
+bar 4 2 Space Invaders [David Winter].ch8
+text 5 2 brix.ch8
+text 6 2 Pong (1 player).ch8
+text 7 2 ~!"#$%&'()*+,-./0123456789:;<=>?@
+text 8 2 ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`{|}
+inv 10 2 inverse
+text 26 39 v
+text 28 1 Loaded brix.ch8
+bar 29 1 U/D move  R/C open  L back
+# overlay on, game paused
+ctrl 3

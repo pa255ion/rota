@@ -1,0 +1,50 @@
+# Save states at layer 4 (side track N, N.5; Makefile ci-savestate-a800xl;
+# the Arty's top, which has the hooks): as the PS app does it with
+# A800.Hooks's link map (the state mode 0x140050, the state's write
+# window 0x150000 and read window 0x170000, 128 KiB each, RAM from 0x10000
+# in them; the read-back control 0x140000 for the byte channel).
+#
+# the OS starting up (built-in: BASIC); the menu pauses it; reads on the
+# byte channel; freeze (within a frame: the core runs on to a moment a
+# state can be taken, in vertical blank: within a few frames, as the
+# OS's serial port must be idle too)
+wait 200000
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 100000
+# expected (test/ps/state.hex): the status (frozen, the table's 0x80
+# bytes as 80 00, version 1), a RAM byte written and read back through
+# the window ($9000: 77)
+bytes 0x171F00 00000000
+bytes 0x169000 77
+bytes 0x189000 00
+# a load through the CPU: held (the core at power-on; frozen at once: 01;
+# no file written, so the program stays), RAM's $9000 a JMP $9000, the
+# ROM overlay a routine at $F800 (overlay offset 0, the reset vector at
+# 0x7FC): LDA #$42, STA $9010, JMP $9000; its end the JMP ($F805), armed;
+# let go
+hold 1
+wait 10
+bytes 0x171F00 00
+bytes 0x169000 4C0090
+bytes 0x156000 A9428D10904C0090
+bytes 0x1567FC 00F8
+bytes 0x151F10 05F801
+hold 0
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 20000
+# the routine ran ($9010 = 42) and the overlay ended at its JMP: the CPU
+# runs on from RAM (frozen there, the table's PC is $9000)
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 40000
+bytes 0x170005 0000
+bytes 0x189010 00
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 2000

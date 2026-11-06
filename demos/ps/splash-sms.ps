@@ -1,0 +1,16 @@
+# Side track J, step 5 (layer 4): the Master System boot splash, then the menu
+# as the PS app opens it after an input (platform/ps/splash.zig, relay.zig):
+# the demo runs from reset (make resim ROM=, standing in for the PS app's
+# load), about 2 s of it (the logo is up by then), then the menu's rows
+# and the control write that pauses the core and shows the overlay over
+# the splash. make ci-demos compares frame 115 (the splash) and frame 125
+# (the menu) with demos/golden/splash-<system>/. Format:
+# Platform.Sim.Overlay.
+wait 2000000
+bar 0 1 ROM menu - Master System
+text 1 1 /sms
+bar 3 2 rota/
+text 28 1 (boot splash; a key opened the menu)
+bar 29 1 U/D move  R/C open  L back
+# overlay on, game paused
+ctrl 3

@@ -1,0 +1,12 @@
+# side track O, O.3: frame advance (ci-arty-gb). Paused at once, before
+# the first frame start; then three steps, each followed by about three
+# frames' time: each runs the core to its next frame start only, so PS_IN
+# bit 7 flips three times (more if a step ran on)
+ctrl 2
+wait 50000
+ctrl 6
+wait 50000
+ctrl 6
+wait 50000
+ctrl 6
+wait 60000

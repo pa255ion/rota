@@ -1,0 +1,119 @@
+cabal-version:      2.4
+name:               mos6502
+version:            0.1.0.0
+synopsis:           Shared MOS 6502 CPU: cycle-level reference model and Clash core
+description:
+  Shared by every 6502 system (M3 NES first; docs/systems/nes.md,
+  "Shared 6502 package"). Knows nothing about any machine: the caller
+  supplies the bus. Decimal mode is a parameter (the NES 2A03 has none).
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    Mos6502.Spec
+    Mos6502.SpecFast
+    Mos6502.Types
+    Mos6502.Decode
+    Mos6502.Core
+  -- The NES spec runs test ROMs for tens of millions of CPU cycles.
+  ghc-options:      -O2
+  build-depends:
+    vector
+
+-- Layer 0 (docs/TESTING.md): the reference model against Tom Harte's
+-- SingleStepTests (tools/fetch-roms.sh, roms/6502/): final state and the
+-- bus access of every cycle, 10 000 cases per opcode.
+test-suite mos6502-spec
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  other-modules:
+    Mos6502.SingleStep
+    Mos6502.Interrupts
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -O2
+  build-depends:
+    mos6502,
+    aeson,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    vector,
+    tasty,
+    tasty-hunit
+
+-- Layers 1 and 2: the decoder, the Clash core ("Mos6502.Core" as plain
+-- Haskell) on SingleStepTests, and in lockstep with the reference model.
+test-suite mos6502-lockstep
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Lockstep.hs
+  other-modules:
+    Mos6502.SingleStep
+    Mos6502.Harness
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -O2
+  build-depends:
+    mos6502,
+    aeson,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    vector,
+    tasty,
+    tasty-hunit,
+    tasty-hedgehog,
+    hedgehog

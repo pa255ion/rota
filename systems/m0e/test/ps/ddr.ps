@@ -1,0 +1,27 @@
+# Side track C's DDR test (M0e.Tester) as the PS app runs it
+# (platform/ps/ddrtest.zig): two runs, each followed by the result bytes
+# 0 (status), 4 to 7 (checksum) and 16 to 19 (words read), which come
+# back on PS_IN's byte channel. Played by the Verilator harness against
+# its AXI slave (make sim SYSTEM=m0e; platform/sim/axi.zig) and by
+# m0e-unit against Platform.Mem.Sim; both must read
+# test/golden/ps_bytes.hex. Format: platform/sim/ps.zig.
+#
+# Run 1: 512 words from 0x01000000, one after another (mode 0).
+bytes 0x000000 00000001
+bytes 0x000004 00020000
+bytes 0x000008 00
+bytes 0x00000C 00000000
+bytes 0x000010 01
+wait 600
+bytes 0x010000 00
+bytes 0x010004 00000000
+bytes 0x010010 00000000
+# Run 2: 256 words at random offsets below 1 MiB (mode 0x80, mask 0xFFFFF).
+bytes 0x000004 00010000
+bytes 0x000008 80
+bytes 0x00000C FFFF0F00
+bytes 0x000010 01
+wait 1000
+bytes 0x010000 00
+bytes 0x010004 00000000
+bytes 0x010010 00000000

@@ -1,0 +1,174 @@
+== 1 CPU Behavior
+   pass       ROM is not writable
+   pass       RAM Mirroring
+   pass       PC Wraparound
+   pass       The Decimal Flag
+   pass       The B Flag
+   pass       Dummy read cycles
+   pass       Dummy write cycles
+   pass       Open Bus
+   pass       All NOP instructions
+== 2 Addressing mode wraparound
+   pass       Absolute Indexed
+   pass       Zero Page Indexed
+   pass       Indirect
+   pass       Indirect, X
+   pass       Indirect, Y
+   pass       Relative
+== 3 Unofficial Instructions: SLO
+   pass       $03   SLO indirect,X
+   pass       $07   SLO zeropage
+   pass       $0F   SLO absolute
+   pass       $13   SLO indirect,Y
+   pass       $17   SLO zeropage,X
+   pass       $1B   SLO absolute,Y
+   pass       $1F   SLO absolute,X
+== 4 Unofficial Instructions: RLA
+   pass       $23   RLA indirect,X
+   pass       $27   RLA zeropage
+   pass       $2F   RLA absolute
+   pass       $33   RLA indirect,Y
+   pass       $37   RLA zeropage,X
+   pass       $3B   RLA absolute,Y
+   pass       $3F   RLA absolute,X
+== 5 Unofficial Instructions: SRE
+   pass       $43   SRE indirect,X
+   pass       $47   SRE zeropage
+   pass       $4F   SRE absolute
+   pass       $53   SRE indirect,Y
+   pass       $57   SRE zeropage,X
+   pass       $5B   SRE absolute,Y
+   pass       $5F   SRE absolute,X
+== 6 Unofficial Instructions: RRA
+   pass       $63   RRA indirect,X
+   pass       $67   RRA zeropage
+   pass       $6F   RRA absolute
+   pass       $73   RRA indirect,Y
+   pass       $77   RRA zeropage,X
+   pass       $7B   RRA absolute,Y
+   pass       $7F   RRA absolute,X
+== 7 Unofficial Instructions: *AX
+   pass       $83   SAX indirect,X
+   pass       $87   SAX zeropage
+   pass       $8F   SAX absolute
+   pass       $97   SAX zeropage,Y
+   pass       $A3   LAX indirect,X
+   pass       $A7   LAX zeropage
+   pass       $AF   LAX absolute
+   pass       $B3   LAX indirect,Y
+   pass       $B7   LAX zeropage,Y
+   pass       $BF   LAX absolute,Y
+== 8 Unofficial Instructions: DCP
+   pass       $C3   DCP indirect,X
+   pass       $C7   DCP zeropage
+   pass       $CF   DCP absolute
+   pass       $D3   DCP indirect,Y
+   pass       $D7   DCP zeropage,X
+   pass       $DB   DCP absolute,Y
+   pass       $DF   DCP absolute,X
+== 9 Unofficial Instructions: ISC
+   pass       $E3   ISC indirect,X
+   pass       $E7   ISC zeropage
+   pass       $EF   ISC absolute
+   pass       $F3   ISC indirect,Y
+   pass       $F7   ISC zeropage,X
+   pass       $FB   ISC absolute,Y
+   pass       $FF   ISC absolute,X
+== 10 Unofficial Instructions: SH*
+   pass (1)  $93   SHA indirect,Y
+   pass (1)  $9F   SHA absolute,Y
+   pass (1)  $9B   SHS absolute,Y
+   pass       $9C   SHY absolute,X
+   pass       $9E   SHX absolute,Y
+   pass       $BB   LAE absolute,Y
+== 11 Unofficial Immediates
+   pass       $0B   ANC immediate
+   pass       $2B   ANC immediate
+   pass       $4B   ASR immediate
+   pass       $6B   ARR immediate
+   pass       $8B   ANE immediate
+   pass       $AB   LXA immediate
+   pass       $CB   AXS immediate
+   pass       $EB   SBC immediate
+== 12 CPU Interrupts
+   pass       Interrupt flag latency
+   pass       NMI Overlap BRK
+   pass       NMI Overlap IRQ
+== 13 APU Registers and DMA tests
+   pass       DMA + Open Bus
+   pass (1)  DMA + $2002 Read
+   pass       DMA + $2007 Read
+   pass       DMA + $2007 Write
+   pass       DMA + $4015 Read
+   pass (1)  DMA + $4016 Read
+   pass       DMC DMA Bus Conflicts
+   pass       DMC DMA + OAM DMA
+   pass       Explicit DMA Abort
+   pass (1)  Implicit DMA Abort
+== 14 APU Tests
+   pass       Length Counter
+   pass       Length Table
+   pass       Frame Counter IRQ
+   pass       Frame Counter 4-step
+   pass       Frame Counter 5-step
+   pass       Delta Modulation Channel
+   pass (2)  APU Register Activation
+   pass       Controller Strobing
+   pass (1)  Controller Clocking
+== 15 CPU Behavior 2
+   pass       Instruction Timing
+   pass       Implied Dummy Reads
+   pass       Branch Dummy Reads
+   pass       JSR Edge Cases
+   pass       Internal Data Bus
+   pass (1)  DMA Landing on Write
+   pass       DMC Reload Timing
+== 16 Power On State
+   draw       PPU Reset Flag
+   draw       CPU RAM
+   draw       CPU Registers
+   draw       PPU RAM
+   draw       Palette RAM
+== 17 PPU Behavior
+   pass       CHR ROM is not writable
+   pass       PPU Register Mirroring
+   pass       PPU Register Open Bus
+   pass (16)  PPU Read Buffer
+   pass       Palette RAM Quirks
+== 18 PPU VBlank Timing
+   pass       VBlank beginning
+   pass       VBlank end
+   pass       NMI Control
+   pass       NMI Timing
+   pass       NMI Suppression
+   pass       NMI at VBlank end
+   pass       NMI disabled at VBlank
+== 19 Sprite Evaluation
+   pass       Sprite overflow behavior
+   pass       Sprite 0 Hit behavior
+   pass       $2002 flag timing
+   pass       Suddenly Resize Sprite
+   pass       Misaligned OAM DMA
+   pass       Arbitrary Sprite zero
+   pass       Misaligned OAM behavior
+   pass       OAM Corruption
+== 20 PPU Misc.
+   pass       t Register Quirks
+   pass (16)  Address $2004 behavior
+   pass       INC $4014
+   pass       Rendering Flag Behavior
+   pass       $2007 read w/ rendering
+   pass       $2004 Stress Test
+   pass       $2007 Stress Test
+== 21 Advanced Background Evaluation
+   pass       Attributes As Tiles
+   pass       Stale BG Shift Registers
+   pass       BG Serial In
+   pass       ALE + Read
+   pass       Hybrid Addresses
+== 22 Advanced Sprite Evaluation
+   pass (2)  Sprites On Scanline 0
+   pass       Stale Sprite Shift Regs
+   pass       Frozen OAM2 Increment
+   pass       Misaligned OAM2 Address
+score 146 / 146

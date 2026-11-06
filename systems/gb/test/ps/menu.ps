@@ -1,0 +1,16 @@
+# A Game Boy ROM menu screen as the PS app draws it (platform/ps/menu.zig),
+# played on the PS link by the Verilator harness (make sim SYSTEM=gb
+# SIM_PS=this file; side track A) and rendered by Platform.Sim.Overlay for
+# the golden (test/golden/vga/menu-overlay.png). Format:
+# Platform.Sim.Overlay.
+bar 0 1 ROM menu - Game Boy
+text 1 1 /gb/games
+text 3 2 local/
+bar 4 2 libbet.gb
+text 5 2 Puzzle (Rev 1) (Rev 1).gb
+text 6 2 a very long name for a cartridge file that does not fit.g~
+text 26 39 v
+text 28 1 Cartridge type not supported (MBC).
+bar 29 1 U/D move  R/C open  L back
+# overlay on, game paused
+ctrl 3

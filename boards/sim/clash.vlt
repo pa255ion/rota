@@ -1,0 +1,26 @@
+`verilator_config
+// Lint waivers for Clash-generated Verilog (make lint, make sim). Each rule
+// below is a pattern Clash emits on purpose. Anything else that
+// --lint-only -Wall reports makes "make lint" fail and is fixed at the Clash
+// level (CLAUDE.md rule 4). Reviewed 2026-10-02 on m0b_top.
+// (No comment line here may start with the tool's name or contain a
+// backtick: both are parsed as directives.)
+
+// "reg r = init;" plus a reset branch in the always block: Clash gives
+// every register its power-up value as an initialiser, which Xilinx FPGAs
+// honour (and the simulator models).
+lint_off -rule PROCASSINIT
+
+// Clash indexes bit vectors with 64-bit literals, e.g. x[(64'sd7)].
+lint_off -rule WIDTHTRUNC -file "*" -match "*requires * bit index, not 64 bits*"
+
+// Clash lowers tuples and records to wide vectors and slices out the
+// fields it needs (for example the reset half of a clock/reset pair, or
+// the low bits of a product that is only shifted). Truly unused Haskell
+// bindings are caught by GHC's -Wall instead.
+lint_off -rule UNUSEDSIGNAL
+
+// Clash converts to its 64-bit Int with $unsigned(x) of a narrower value,
+// e.g. for derived Eq on enumerations (dataToTag) and Int-typed bit
+// indices. Reviewed 2026-10-02 on chip8_top.
+lint_off -rule WIDTHEXPAND -file "*" -match "*expects 64 bits on the Assign RHS, but Assign RHS's UNSIGNED generates*"

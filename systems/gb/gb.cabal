@@ -1,0 +1,239 @@
+cabal-version:      2.4
+name:               gb
+version:            0.1.0.0
+synopsis:           Game Boy (DMG) reference model and Clash core
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    Gb.Cartridge
+    Gb.Hooks
+    Gb.Screen
+    Gb.Types
+    Gb.Decode
+    Gb.Cpu
+    Gb.Apu
+    Gb.Ppu
+    Gb.Core
+    Gb.Display
+    Gb.Loader
+    Gb.Top
+    Gb.TopCgb
+    Gb.ArtyTop
+    Gb.ArtyTopCgb
+    Gb.Machine
+    Gb.Spec
+    Gb.Spec.State
+    Gb.Spec.Ppu
+    Gb.Spec.Apu
+    Gb.Spec.Machine
+    Gb.Spec.Cpu
+    Gb.Spec.SaveState
+    Gb.StateTable
+    Gb.StateTap
+  -- The spec runs the test ROMs for tens of millions of M-cycles.
+  ghc-options:      -O2
+  build-depends:
+    platform,
+    bytestring,
+    vector,
+    JuicyPixels
+
+-- Layer 0 (docs/TESTING.md): the reference model and the test hooks, on
+-- the fetched test ROMs (tools/fetch-roms.sh) and on our own regression
+-- ROMs (build/gb/asm/, assembled by make gb-asm).
+test-suite gb-spec
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  other-modules:
+    Gb.TestRoms
+    Gb.SpecCpu
+    Gb.SpecRoms
+    Gb.SpecSaveState
+    Gb.SpecRestore
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    gb,
+    platform,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    process,
+    JuicyPixels,
+    tasty,
+    tasty-hunit,
+    tasty-golden,
+    tasty-hedgehog,
+    hedgehog
+
+-- Layer 1: pure pieces of the hardware design (decoder, ...), and their
+-- agreement with the reference model.
+test-suite gb-unit
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Unit.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    gb,
+    platform,
+    bytestring,
+    tasty,
+    tasty-hunit,
+    tasty-hedgehog,
+    hedgehog
+
+-- Layer 2: the Clash CPU core against the reference model, in lockstep.
+test-suite gb-lockstep
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Lockstep.hs
+  other-modules:
+    Gb.TestRoms
+    Gb.CoreHarness
+    Gb.PpuHarness
+    Gb.FullHarness
+  -- -M8g (2026-10-08): its live data peaks at 4.9 GB (quick tier) and
+  -- 6.1 GB (full); uncapped, GHC's copying collector held up to 14 GB,
+  -- too much beside the other suites on the shared machine (CLAUDE.md,
+  -- "Shared machine")
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M8g" -O2
+  build-depends:
+    gb,
+    vector,
+    platform,
+    bytestring,
+    directory,
+    filepath,
+    JuicyPixels,
+    tasty,
+    tasty-hunit,
+    tasty-golden,
+    tasty-hedgehog,
+    hedgehog
+
+-- Run a ROM on the reference model and print what it sent over serial
+-- and how it stopped: cabal run gb-run -- blargg|mooneye|frames=N <rom.gb> [M-cycles] [--png f]
+executable gb-run
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Run.hs
+  ghc-options:      -O2 -rtsopts
+  build-depends:
+    gb,
+    platform,
+    bytestring
+
+-- Layer 3: the display path in Clash simulation, and the VGA / HDMI goldens
+-- of layer 4 (from the spec goldens).
+test-suite gb-golden
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Golden.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    gb,
+    platform,
+    vector,
+    filepath,
+    JuicyPixels,
+    tasty,
+    tasty-hunit,
+    tasty-golden,
+    bytestring
+
+-- Layer 2, side track L (PLAN.md L.6c.2): the core's save-state hooks in
+-- Clash simulation (gbCoreHooked): a save read out, a load through the
+-- CPU (the restore routine from build/host/gb-restore).
+test-suite gb-savestate
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          SaveState.hs
+  other-modules:
+    Gb.TestRoms
+  -- (-M6g: a run's outputs are kept for its several reads; state_fill peaks at 3.4 GB)
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M6g"
+  build-depends:
+    gb,
+    platform,
+    bytestring,
+    directory,
+    filepath,
+    process,
+    vector,
+    JuicyPixels,
+    tasty,
+    tasty-hunit,
+    tasty-golden
+
+-- Side track Q (PLAN.md Q.1): the reference model behind a C ABI, for
+-- the desktop emulator's Zig front end (platform/desktop/; make desktop).
+foreign-library gb-desktop
+  type:             native-shared
+  default-language: Haskell2010
+  hs-source-dirs:   desktop
+  other-modules:    Gb.Desktop
+  ghc-options:      -O2 -Wall
+  build-depends:
+    platform,
+    base,
+    gb,
+    bytestring,
+    vector

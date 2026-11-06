@@ -1,0 +1,77 @@
+cabal-version:      2.4
+name:               m0e
+version:            0.1.0.0
+synopsis:           Side track C: DDR read test top (AXI HP0 master, latency measurement)
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    M0e.Tester
+    M0e.Top
+  build-depends:
+    platform
+
+test-suite m0e-unit
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Main.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    m0e,
+    platform,
+    tasty,
+    tasty-hunit,
+    tasty-hedgehog,
+    hedgehog

@@ -1,0 +1,13 @@
+# A load through the PS link, as the SD menu does it (M5 step 5.9;
+# Makefile ci-arty-gg, ROM raster.gg in the harness's DDR): part way into
+# frame 3 (wait counts microseconds, a frame is 16.7 ms) the PS holds the
+# machine, writes the cartridge word (Sega mapper, 4 banks: bytes 00 03 at
+# Gg.Machine.cartAddr) and lets go. The machine must start afresh on the
+# ROM, so raster.s's picture is the golden again (every frame the same once
+# it runs); PS_IN must say system 7.
+wait 44000
+hold 1
+wait 200
+bytes 0 0003
+wait 100
+hold 0

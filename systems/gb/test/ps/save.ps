@@ -1,0 +1,22 @@
+# Battery saves (side track I, phase 1): what the PS app does with
+# build/gb/asm/save.gb (systems/gb/test/asm/save.asm) and its .sav, played
+# on the PS link by the Verilator harness (ci-gb; format:
+# platform/sim/ps.zig). Gb.Loader's map: cartridge RAM 0x100000 (written
+# while held), its read window 0x120000, the save control 0x140000.
+#
+# The save, written while the core is held: "SAVE", a count of 41, and 16
+# bytes at the end of the 8 KiB.
+hold 1
+bytes 0x100000 534156452900
+bytes 0x101FF0 000102030405060708090A0B0C0D0E0F
+hold 0
+# the game boots: count 42 (and the dirty flag, PS_IN bit 6)
+wait 2000
+# ignored: the core runs (cartridge RAM is the game's now)
+bytes 0x100005 FF
+# read it back on the byte channel, while the game runs:
+# expected (test/ps/save.hex): "SAVE", 42, 0, then 00 to 0F
+bytes 0x140000 01
+bytes 0x120000 000000000000
+bytes 0x121FF0 00000000000000000000000000000000
+bytes 0x140000 00

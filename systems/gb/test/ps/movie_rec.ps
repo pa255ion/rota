@@ -1,0 +1,17 @@
+# side track O, O.2: the determinism gate's recording (ci-arty-gb): the
+# sync bit, then keys changed at odd moments, mid-frame; arty-sim
+# --movie-record takes them at the frame toggles, as the PS app does
+bytes 0xF01003 01
+wait 41234
+keys 0x0001
+wait 23456
+keys 0x0011
+wait 37777
+keys 0x0000
+wait 9999
+keys 0x0080
+wait 51111
+keys 0x0024
+wait 17321
+keys 0x0000
+wait 60000

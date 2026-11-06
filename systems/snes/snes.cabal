@@ -1,0 +1,334 @@
+cabal-version:      2.4
+name:               snes
+version:            0.1.0.0
+synopsis:           Super Nintendo (NTSC), milestone 7
+description:
+  The machine around the shared 65C816 (cpus/w65c816) and the SPC700
+  (cpus/spc700): docs/systems/snes.md.
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  -- (Snes.Core: the state record forced each clock in Haskell's
+  -- simulations; Clash's HDL runs don't define it: no change there)
+  cpp-options:      -DSNES_SIM_STRICT
+  exposed-modules:
+    Snes.Cart
+    Snes.Spec
+    Snes.Spec.Map
+    Snes.Spec.Machine
+    Snes.Spec.Apu
+    Snes.Spec.Dsp
+    Snes.Spec.Gauss
+    Snes.Spec.Ppu
+    -- side track Q: the fast version (Snes.SpecFast.*, the desktop's)
+    Snes.SpecFast.Apu
+    Snes.SpecFast.Cpu
+    Snes.SpecFast.Spc700
+    Snes.SpecFast.Machine
+    Snes.SpecFast.Ppu
+    Snes.SpecFast.RenderLog
+    Snes.Ppu
+    Snes.PpuOoc
+    Snes.Dsp
+    Snes.DspOoc
+    Snes.Bus
+    Snes.BusOoc
+    Snes.MachineOoc
+    Snes.TraceTemplate
+    Snes.StateHooks
+    Snes.Apu
+    Snes.RomPort
+    Snes.Core
+    Snes.Display
+    Snes.Save
+    Snes.Machine
+    Snes.ArtyTop
+    Snes.Top
+  ghc-options:      -O2
+  build-depends:
+    w65c816,
+    spc700,
+    platform,
+    bytestring,
+    vector
+
+-- The cartridge header of each file named (the PS app's check, step 7.11,
+-- follows the same rules).
+executable snes-cart
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Cart.hs
+  build-depends:
+    snes,
+    bytestring
+
+-- The tops' block RAM images (step 7.10): snes-image ROM DIR [--ipl FILE].
+executable snes-image
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Image.hs
+  build-depends:
+    snes,
+    bytestring,
+    filepath
+
+-- The reference model headless (step 7.3): frames, RESULT, the screen's text.
+executable snes-run
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Run.hs
+  ghc-options:      -O2 -rtsopts
+  build-depends:
+    snes,
+    bytestring,
+    vector,
+    JuicyPixels
+
+-- How a game's ROM reads from DDR set the line-locked machine back (step
+-- 7.12): the spec's bus trace through a model of the ROM port, the DDR
+-- cache and the pace.
+executable snes-ddrmodel
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          DdrModel.hs
+  ghc-options:      -O2 -rtsopts
+  build-depends:
+    snes,
+    bytestring,
+    vector
+
+-- Layer 0 (docs/TESTING.md): the cartridge parser on our regression ROMs
+-- (build/snes/asm/, make snes-asm) and on every fetched cartridge (step
+-- 7.0); the machine (Snes.Spec) on them, gilyon's cputest and krom's CPU
+-- tests (step 7.3).
+test-suite snes-spec
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  other-modules:
+    DspTest
+    DisplayTest
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    snes,
+    platform,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit
+
+-- Layer 1, step 7.6: the Clash PPU (Snes.Ppu) in lockstep with the spec's,
+-- replaying each ROM's PPU accesses as the spec ran them.
+test-suite snes-lockstep
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Lockstep.hs
+  other-modules:
+    PpuModel
+  ghc-options:      -O2 -threaded -rtsopts "-with-rtsopts=-N4 -M6g"
+  build-depends:
+    snes,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit
+
+-- Layer 1 (step 7.8): the Clash S-DSP ("Snes.Dsp") in lockstep with the
+-- spec's, a sample at a time, on random registers and ARAM.
+test-suite snes-dsp
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          DspLockstep.hs
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M3g" -O2
+  build-depends:
+    snes,
+    bytestring,
+    directory,
+    vector,
+    tasty,
+    tasty-hunit
+
+-- Layer 1 (step 7.9): the Clash machine ("Snes.Bus" with "Snes.Ppu", the
+-- sound module the spec's for now) against the spec machine, every bus
+-- event, frame and memory.
+-- The Clash machine's parts against the spec a frame at a time, for as
+-- long as a game runs (step 7.12; snes-core's models, nothing kept).
+executable snes-follow
+  import:           clash-common
+  hs-source-dirs:   test
+  main-is:          Follow.hs
+  other-modules:
+    PpuModel
+  ghc-options:      -O2 -rtsopts "-with-rtsopts=-M8g"
+  build-depends:
+    snes,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    tasty-hunit
+
+-- step 7.14a: save states by the direct path, on the circuit (two cores in
+-- Clash's simulation: a state moved from one to the other resumes as the
+-- original)
+test-suite snes-savestate
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          SaveState.hs
+  ghc-options:      -O2 -threaded -rtsopts "-with-rtsopts=-M20g -s"
+  build-depends:
+    snes,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit
+
+test-suite snes-core
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          CoreLockstep.hs
+  other-modules:
+    PpuModel
+  ghc-options:      -O2 -threaded -rtsopts "-with-rtsopts=-N4 -M12g"
+  build-depends:
+    snes,
+    spc700,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit
+
+-- Side track Q (PLAN.md Q.5): the fast version ("Snes.SpecFast", the
+-- desktop emulator's) against the reference model, side by side on the
+-- same inputs: every instruction's master clock and registers, every
+-- frame's picture, WRAM and sound (test/SpecFast.hs; full tier: longer
+-- runs and every krom and OpenSNES ROM).
+test-suite snes-specfast
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          SpecFast.hs
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N4 -M3g" -O2
+  build-depends:
+    snes,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit
+
+-- Side track Q: the reference model against its fast version, for speed
+-- and allocation (+RTS -s); app/FastBench.hs.
+executable snes-fast-bench
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          FastBench.hs
+  ghc-options:      -O2 -rtsopts -threaded
+  build-depends:
+    snes,
+    bytestring
+
+-- Side track Q (PLAN.md Q.5): the SNES (its fast version, Snes.SpecFast)
+-- behind a C ABI, for the desktop emulator's Zig front end
+-- (platform/desktop/; make desktop).
+foreign-library snes-desktop
+  type:             native-shared
+  default-language: Haskell2010
+  hs-source-dirs:   desktop
+  other-modules:    Snes.Desktop
+  -- (the threaded runtime: the render thread, Q.6)
+  ghc-options:      -O2 -Wall -threaded
+  build-depends:
+    platform,
+    base,
+    snes,
+    bytestring,
+    vector
+
+-- Side track Q (PLAN.md Q.6): the fast 65816 (Snes.SpecFast.Cpu) on the
+-- SingleStepTests, as w65c816-spec runs them on the reference
+-- (test/SpecFastCpu.hs; the first cases per file, all with EMU_FULL_TESTS=1).
+test-suite snes-specfast-cpu
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          SpecFastCpu.hs
+  other-modules:
+    SpecFastCpu.SingleStep
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -O2
+  build-depends:
+    snes,
+    w65c816,
+    aeson,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    vector,
+    tasty,
+    tasty-hunit

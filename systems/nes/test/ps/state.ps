@@ -1,0 +1,52 @@
+# Save states at layer 4 (side track N, N.8; Makefile ci-savestate-nes;
+# the Arty's top, which has the hooks): as the PS app does it with
+# Nes.StateHooks's link map (the state mode 0x140050, the state's write
+# window 0x150000 and read window 0x170000, 128 KiB each: RAM from 0x8000,
+# PRG RAM from 0x10000 in them; the read-back control 0x140000 for the
+# byte channel).
+#
+# the built-in scene ROM running; the menu pauses it; reads on the byte
+# channel; freeze (the core runs on to a moment a state can be taken, in
+# the vertical blank: within a frame)
+wait 200000
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 100000
+# expected (test/ps/state.hex): the status (frozen, the table's 0x100
+# bytes as 00 01, version 1), a RAM byte and a PRG RAM byte written and
+# read back through the windows ($0300: 77, $6010: 55)
+bytes 0x171F00 00000000
+bytes 0x158300 77
+bytes 0x178300 00
+bytes 0x160010 55
+bytes 0x180010 00
+# a load through the CPU: held (the core at power-on; frozen at once: 01;
+# no file written, so the cartridge stays), RAM's $0300 a JMP $0300, the
+# ROM overlay a routine at $F800 (overlay offset 0, the reset vector at
+# 0x7FC): LDA #$42, STA $0310, JMP $0300; its end the JMP ($F805),
+# armed; let go
+hold 1
+wait 10
+bytes 0x171F00 00
+bytes 0x158300 4C0003
+bytes 0x156000 A9428D10034C0003
+bytes 0x1567FC 00F8
+bytes 0x151F10 05F801
+hold 0
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 20000
+# the routine ran ($0310 = 42) and the overlay ended at its JMP: the CPU
+# runs on from RAM (frozen there, the table's PC is $0300)
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 60000
+bytes 0x170005 0000
+bytes 0x178310 00
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 2000

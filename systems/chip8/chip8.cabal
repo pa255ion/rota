@@ -1,0 +1,172 @@
+cabal-version:      2.4
+name:               chip8
+version:            0.1.0.0
+synopsis:           CHIP-8 (COSMAC VIP) reference model and Clash core
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    Chip8.Spec
+    Chip8.Types
+    Chip8.Decode
+    Chip8.Core
+    Chip8.Display
+    Chip8.Peripherals
+    Chip8.Loader
+    Chip8.Top
+    Chip8.ArtyTop
+    Chip8.StateTable
+    Chip8.SpecState
+    Chip8.StateTap
+    Chip8.StateHooks
+  build-depends:
+    platform,
+    vector
+
+-- Layer 0 (docs/TESTING.md): the reference model on its own, per opcode
+-- and on the Timendus test ROMs (fetched by tools/fetch-roms.sh).
+test-suite chip8-spec
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    chip8,
+    platform,
+    vector,
+    bytestring,
+    directory,
+    filepath,
+    JuicyPixels,
+    tasty,
+    tasty-hunit,
+    tasty-golden
+
+-- Layer 1: pure pieces of the hardware design (decoder, ...).
+test-suite chip8-unit
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Unit.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    chip8,
+    vector,
+    tasty,
+    tasty-hunit,
+    tasty-hedgehog,
+    hedgehog
+
+-- Layer 2: the core against the reference model, in lockstep.
+test-suite chip8-lockstep
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Lockstep.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    chip8,
+    platform,
+    vector,
+    bytestring,
+    directory,
+    filepath,
+    JuicyPixels,
+    tasty,
+    tasty-hunit,
+    tasty-hedgehog,
+    hedgehog
+
+-- Layer 3: the display path in Clash simulation, alone and with the core.
+test-suite chip8-golden
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Golden.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    chip8,
+    platform,
+    bytestring,
+    directory,
+    filepath,
+    JuicyPixels,
+    tasty,
+    tasty-hunit,
+    tasty-golden
+
+-- RAM image for Chip8.Top (make hdl SYSTEM=chip8 ROM=...).
+executable chip8-ram
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          RamImage.hs
+  build-depends:
+    chip8,
+    bytestring
+
+-- Side track Q (PLAN.md Q.5): the reference model behind a C ABI, for
+-- the desktop emulator's Zig front end (platform/desktop/; make desktop).
+foreign-library chip8-desktop
+  type:             native-shared
+  default-language: Haskell2010
+  hs-source-dirs:   desktop
+  other-modules:    Chip8.Desktop
+  ghc-options:      -O2 -Wall
+  build-depends:
+    platform,
+    bytestring,
+    base,
+    chip8,
+    vector

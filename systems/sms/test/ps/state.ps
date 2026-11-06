@@ -1,0 +1,37 @@
+# Save states at layer 4 on the Master System (side track N, N.2;
+# Makefile ci-savestate-gg; ROM picture.sms on the Arty): Gg.Hooks's link
+# map, as on the Game Gear (systems/gg/test/ps/state.ps), without a boot
+# counter: the freeze, the status, the RAM window, then a load through
+# the CPU whose routine leaves a marker in cartridge RAM.
+wait 20000
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 20000
+# expected (test/ps/state.hex): the status (01 40 01 01), a RAM byte
+# written and read back (77)
+bytes 0x161F00 00000000
+bytes 0x159000 77
+bytes 0x169000 00
+# held (frozen at once: 01), the routine (as the Game Gear's: 42h at
+# cartridge RAM's 8010h, JP 0000h), let go
+hold 1
+wait 10
+bytes 0x161F00 00
+bytes 0x156000 3E0832FCFF3E423210803E0032FCFFC30000
+bytes 0x151F10 110001
+hold 0
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 20000
+# the routine ran: 42h at 8010h
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 20000
+bytes 0x120010 00
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 2000

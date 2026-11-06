@@ -1,0 +1,149 @@
+cabal-version:      2.4
+name:               rota-brand
+version:            0.1.0.0
+synopsis:           The boot splash's generator (side track J): score, logo and each machine's data
+license:            BSD-2-Clause
+build-type:         Simple
+
+common rota-common
+  default-language: GHC2021
+  default-extensions:
+    DerivingStrategies
+  ghc-options:      -Wall -Wcompat
+  build-depends:
+    base,
+    bytestring,
+    containers,
+    vector
+
+library
+  import:           rota-common
+  hs-source-dirs:   src
+  exposed-modules:
+    Rota.Score
+    Rota.Logo
+    Rota.Lab
+    Rota.Clock
+    Rota.Gb
+    Rota.Gb.Rom
+    Rota.Nes
+    Rota.Nes.Rom
+    Rota.A800
+    Rota.A800.Rom
+    Rota.Sega
+    Rota.Sega.Rom
+    Rota.Gg
+    Rota.Gg.Rom
+    Rota.Sms
+    Rota.Sms.Rom
+    Rota.Snes
+    Rota.Snes.Rom
+    Rota.Emit.Util
+    Rota.Palette
+    Rota.Sound
+    Rota.Sound.Gb
+    Rota.Sound.Nes
+    Rota.Sound.A800
+    Rota.Sound.Gg
+    Rota.Sound.Snes
+    Rota.Sound.Chip8
+    Rota.Emit
+    Rota.Render
+    Rota.Chip8.Asm
+    Rota.Pic.Chip8
+  ghc-options:      -O2
+  -- the reference models' APUs (Rota.Render) and palettes; read, never edited
+  build-depends:
+    gb,
+    nes,
+    a800xl
+
+-- Writes every generated file: rota-brand [--out DIR] [--wav DIR]
+executable rota-brand
+  import:           rota-common
+  hs-source-dirs:   app
+  main-is:          Main.hs
+  ghc-options:      -O2
+  build-depends:
+    rota-brand,
+    directory,
+    filepath
+
+-- Step 1's gate (PLAN.md, side track J): the score, the streams, the
+-- budgets, the emitted files' goldens, the streams through the specs' APUs.
+test-suite rota-brand-test
+  import:           rota-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Main.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -O2
+  build-depends:
+    rota-brand,
+    filepath,
+    tasty,
+    tasty-hunit,
+    tasty-golden
+
+-- Layer 3 of steps 2 to 4: the demo ROMs (make demos first) on the specs,
+-- every frame against Rota.Runtime's model; golden frames and audio.
+test-suite rota-demos
+  import:           rota-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Demos.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -O2
+  build-depends:
+    rota-brand,
+    gb,
+    chip8,
+    nes,
+    a800xl,
+    gg,
+    snes,
+    platform,
+    JuicyPixels,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit,
+    tasty-golden
+
+-- A development tool: where a Game Boy demo ROM spends its M-cycles
+-- (rota-profile <rom.gb> <rom.sym> <frames>).
+executable rota-profile
+  import:           rota-common
+  hs-source-dirs:   app
+  main-is:          Profile.hs
+  ghc-options:      -O2
+  build-depends:
+    gb,
+    nes,
+    mos6502
+
+-- A development tool: layer 4, Verilator's HDMI frames against the spec's
+-- screens (rota-compare <dir> <spec.bin> <w> <h> <first> <last>).
+executable rota-compare
+  import:           rota-common
+  hs-source-dirs:   app
+  main-is:          Compare.hs
+  ghc-options:      -O2
+  build-depends:
+    JuicyPixels
+
+-- A development tool: rendition B's figures per machine (tiles, writes,
+-- sprites) as the generator lays them out (rota-stats).
+executable rota-stats
+  import:           rota-common
+  hs-source-dirs:   app
+  main-is:          Stats.hs
+  ghc-options:      -O2
+  build-depends:
+    rota-brand,
+    containers,
+    chip8,
+    nes,
+    a800xl,
+    mos6502,
+    vector,
+    bytestring,
+    JuicyPixels

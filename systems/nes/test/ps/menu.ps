@@ -1,0 +1,15 @@
+# An NES ROM menu screen as the PS app draws it (platform/ps/menu.zig),
+# played on the PS link by the Verilator harness (make resim SYSTEM=nes
+# SIM_PS=this file; ci-nes, M3 step 3.8) and rendered by
+# Platform.Sim.Overlay for the golden (test/golden/vga/menu-overlay.png).
+# Format: Platform.Sim.Overlay.
+bar 0 1 ROM menu - NES
+text 1 1 /nes/blargg
+text 3 2 instr_test-v5/
+text 4 2 ppu_vbl_nmi/
+bar 5 2 sprite_hit_tests_2005.10.05/
+text 6 2 mmc3_test_2/
+text 28 1 Mapper not supported (0-4, 7 only).
+bar 29 1 U/D move  R/C open  L back
+# overlay on, game paused
+ctrl 3

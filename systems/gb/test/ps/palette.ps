@@ -1,0 +1,10 @@
+# The Game Boy Color's palettes for a DMG cartridge (side track I, phase 3):
+# what the PS app (platform/ps/gbc_palette.zig) writes into Gb.Loader's
+# palette window while the core is held, played on the PS link by the
+# harness (ci-gbc, ci-arty-gbc; format: platform/sim/ps.zig). BG 0 =
+# palette 28, OBJ 0 = palette 4, OBJ 1 = palette 5 of the boot ROM's
+# table, so a mix-up of the three shows; with dmg-acid2 the screen equals
+# test/golden/rgb/dmg-acid2-gbc.png (the spec with the same palettes).
+hold 1
+bytes 0x140030 FF7F8C7E007C0000FF7F1F42F21C0000FF7F94524A290000
+hold 0

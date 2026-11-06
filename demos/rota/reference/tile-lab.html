@@ -1,0 +1,1452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rota tile animation lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F4ECD8; --fg: #14111C; --muted: #5B5468; --rule: #D9CCAE; --panel: #EBE0C6;
+  --amber: #A9650A; --amber-fill: #F7A41D; --teal: #17776E; --bad: #B3261E; --good: #17776E;
+  --focus: #17776E; --screen: #14111C; --screen-edge: #453A62;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14111C; --fg: #F4ECD8; --muted: #A69FB4; --rule: #2E2840; --panel: #1C1827;
+    --amber: #F7A41D; --teal: #3CC7B9; --bad: #FF8A80; --good: #3CC7B9; --focus: #F7A41D; --screen: #0E0B14;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14111C; --fg: #F4ECD8; --muted: #A69FB4; --rule: #2E2840; --panel: #1C1827;
+  --amber: #F7A41D; --teal: #3CC7B9; --bad: #FF8A80; --good: #3CC7B9; --focus: #F7A41D; --screen: #0E0B14;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: "Spectral", Georgia, serif; font-size: 1.0625rem; line-height: 1.6; }
+main { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+.mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; }
+h1 { font-weight: 600; font-size: clamp(1.75rem, 4.5vw, 2.4rem); line-height: 1.15; margin: 0 0 0.4rem; }
+.lede { color: var(--muted); max-width: 42em; margin: 0 0 1.5rem; }
+.screen { background: var(--screen); border: 2px solid var(--screen-edge); border-radius: 6px; padding: clamp(0.5rem, 2vw, 1.25rem); display: flex; justify-content: center; }
+.screen canvas { display: block; max-width: 100%; height: auto; image-rendering: pixelated; }
+.row { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; align-items: center; margin: 1rem 0; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; padding: 3px; background: var(--panel); flex-wrap: wrap; }
+.seg button { background: transparent; color: var(--fg); border: 0; border-radius: 999px; padding: 0.3rem 0.85rem; cursor: pointer; font: inherit; font-size: 0.95rem; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.lbl { color: var(--muted); font-size: 0.95rem; }
+.check { display: inline-flex; gap: 0.4rem; align-items: center; cursor: pointer; font-size: 0.95rem; }
+.check input { accent-color: var(--teal); }
+.play { background: var(--amber-fill); color: #14111C; border: 0; border-radius: 999px; padding: 0.55rem 1.2rem; font: inherit; font-weight: 600; cursor: pointer; }
+input[type="range"] { accent-color: var(--teal); }
+#scrub { width: 100%; }
+.now { font-size: 0.85rem; color: var(--muted); min-height: 1.4em; }
+.chart-wrap { border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); padding: 0.5rem; margin: 0.5rem 0 1.25rem; }
+.chart-wrap canvas { display: block; width: 100%; height: 90px; }
+table.stats { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+.stats th, .stats td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.stats th { font-weight: 400; color: var(--muted); }
+.ok { color: var(--good); } .over { color: var(--bad); font-weight: 600; }
+.notes { color: var(--muted); max-width: 46em; }
+.notes h2 { color: var(--fg); font-size: 1.2rem; margin: 2rem 0 0.4rem; }
+.notes p { margin: 0.5rem 0; }
+.table-wrap { overflow-x: auto; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Rota tile animation lab</h1>
+  <p class="lede">The splash for tile hardware. The ring, lambdas and letters are drawn once while the screen is dark; a
+  fabric of traces fills the background, its diagonal pulses moving by redrawing a few tiles' graphics; and each
+  voice is a spark that travels its own path along the fabric when it plays the figure, backwards when it plays
+  the inversion. The counters measure every frame against the machine's limits. Play starts from the top with the
+  machine's own chime; scrubbing is silent.</p>
+
+  <div class="screen"><canvas id="scr"></canvas></div>
+
+  <div class="row">
+    <button class="play" id="play" type="button">Play</button>
+    <label class="check"><input type="checkbox" id="sound" checked> Sound</label>
+    <span class="lbl">Machine</span>
+    <div class="seg" id="presetSeg" role="group" aria-label="Machine"></div>
+  </div>
+  <div class="row">
+    <label class="check"><input type="checkbox" id="lights" checked> Junction lights</label>
+    <label class="check"><input type="checkbox" id="grid" checked> Tile grid</label>
+  </div>
+  <input type="range" id="scrub" min="0" max="100" value="0" aria-label="Frame">
+  <p class="now mono" id="now"></p>
+
+  <div class="chart-wrap"><canvas id="chart" width="900" height="90" aria-label="Tilemap writes per frame"></canvas></div>
+  <div class="table-wrap"><table class="stats" id="stats"></table></div>
+
+  <div class="notes" id="notes"></div>
+</main>
+<script>
+(() => {
+  "use strict";
+  // ---------- The chime, the audition page's sound engine (unchanged), at 150 bpm ----------
+  const Chime = (() => {
+  // ---------- The score: [start beat, end beat, MIDI note] ----------
+  const CHORDS = [["D","I"],["Bm","vi"],["G","IV"],["Em","ii"],["A","V"],["D","I"],["D","I"]];
+  const LAST = 6, END = 8.6, LOOP_BEATS = 11, ROLL = 4, GROW = 5.5;
+  // The rising figure (m3 up, P4 up) enters in the lead, the harmony and the bass a beat apart.
+  // The lead then inverts it (M3 down, m3 down); the harmony imitates the inversion exactly a beat later.
+  const SCORE = {
+    lead: [[0,.5,78],[.5,1,81],[1,3,86],[3,3.5,83],[3.5,4,79],[4,5,76],[5,5.5,81],[5.5,6,79],[6,END,78]],
+    harm: [[0,1,74],[1,1.5,71],[1.5,2,74],[2,3,79],[3,4,76],[4,4.5,73],[4.5,5,69],[5,6,66],[6,END,69]],
+    bass: []
+  };
+  // The bass up to beat 5, then three endings to audition on beat 6 (all consonant with the lead's A5 G5):
+  //   original  D3, then D2 on the crash
+  //   dominant  D3 A2: the second half of the beat becomes A7 (the lead's G5 is its seventh), V7 to I
+  //   figure    F♯2 A2 to D3: the opening figure (m3 up, P4 up) once more, on the lead's first three
+  //             pitch classes, landing on the crash
+  const BASS_HEAD = [[0,1,38],[1,2,35],[2,2.5,43],[2.5,3,47],[3,4,52],[4,5,45]];
+  const BASS_TAILS = {
+    original: [[5,6,50],[6,END,38]],
+    dominant: [[5,5.5,50],[5.5,6,45],[6,END,38]],
+    figure:   [[5,5.5,42],[5.5,6,45],[6,END,50]]
+  };
+  let bassEnd = "figure";   // chosen 2026-10-06
+  const setBass = () => { SCORE.bass = BASS_HEAD.concat(BASS_TAILS[bassEnd]); };
+  setBass();
+  const MOTIFS = [
+    { v: "lead", a: 0, b: 1.5, label: "figure" }, { v: "harm", a: 1, b: 2.5, label: "figure" },
+    { v: "bass", a: 2, b: 3.5, label: "figure" }, { v: "lead", a: 3, b: 4.5, label: "inverted" },
+    { v: "harm", a: 4, b: 5.5, label: "inverted" }, { v: "bass", a: 5, b: 6.5, label: "figure, again", only: "figure" },
+    { v: "bass", a: 5, b: 6, label: "V7", only: "dominant" }, { v: "drums", a: 4, b: 6.6, label: "roll, crescendo through V and I" }
+  ];
+  // [beat, kind, volume 0..15, roll step]: a plain groove, then one roll through the V and I chords
+  // (sixteenths, then thirty-seconds) rising in pitch and swelling from 3 to 14 into the crash.
+  const DRUMS = [
+    [0,"kick",12],[.5,"hat",5],[1,"snare",11],[1.5,"hat",5],[2,"kick",12],[2.5,"hat",5],[3,"snare",11],[3.5,"hat",5],
+    [4,"roll",3,0],[4.25,"roll",4,0],[4.5,"roll",5,1],[4.75,"roll",6,1],
+    [5,"roll",7,2],[5.125,"roll",8,2],[5.25,"roll",9,3],[5.375,"roll",10,3],
+    [5.5,"roll",11,4],[5.625,"roll",12,4],[5.75,"roll",13,5],[5.875,"roll",14,5],
+    [LAST,"crash",15]];
+  const ROLL_HITS = DRUMS.filter(d => d[1] === "roll").map(d => d[0]);
+  const NAMES = ["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
+  const noteName = m => NAMES[m % 12] + (Math.floor(m / 12) - 1);
+  const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
+  const hex = (v, n) => "$" + v.toString(16).toUpperCase().padStart(n, "0");
+  const cents = (got, want) => 1200 * Math.log2(got / want);
+  const CPU = 1789773, PSG = 3579545;
+  const smsNoiseBass = () => false;
+
+  // ---------- Machines ----------
+  const SYS = {
+    pure: {
+      voices: { lead: "Sine", harm: "Sine", bass: "Sine", drums: "Filtered noise" },
+      pitch: (v, f) => ({ hz: f, reg: f.toFixed(1) + " Hz" }),
+      formula: "Exact equal temperament, A4 = 440 Hz, with smooth legato: a reference for the harmony itself."
+    },
+    chip8: {
+      voices: { buzz: "Buzzer, 440 Hz" },
+      formula: "One buzzer at a fixed pitch, driven by the 60 Hz sound timer. Legato can't exist with a single pitch (tied notes would merge into one tone), so the lead's rhythm survives as short beeps, each start rounded to a 60 Hz frame, and a long last one."
+    },
+    gb: {
+      voices: { lead: "Pulse 1, 25 %", harm: "Pulse 2, 50 %", bass: "Wave, 4-bit sine", drums: "Noise" },
+      pitch: (v, f) => {
+        if (v === "bass") { const x = Math.round(2048 - 65536 / f); return { hz: 65536 / (2048 - x), reg: "x=" + hex(x, 3) }; }
+        const x = Math.round(2048 - 131072 / f); return { hz: 131072 / (2048 - x), reg: "x=" + hex(x, 3) };
+      },
+      formula: "Pulse 131072 / (2048 − x) Hz, wave 65536 / (2048 − x) Hz. Legato as a sound driver plays it: new frequencies are written without retriggering, so the volume holds steady through each phrase (the Game Boy can't change volume without a retrigger). The final note is retriggered with a decaying envelope. Bends and vibrato are frequency writes every frame, so they step through the real register values. The open hat uses the noise channel's 7-bit mode for a metallic ring, and the roll climbs through six real noise frequency settings as it gets louder."
+    },
+    nes: {
+      voices: { lead: "Pulse 1, 25 %", harm: "Pulse 2, 50 %", bass: "Triangle", drums: "Noise" },
+      pitch: (v, f) => {
+        if (v === "bass") { const t = Math.round(CPU / (32 * f) - 1); return { hz: CPU / (32 * (t + 1)), reg: "t=" + hex(t, 3) }; }
+        const t = Math.round(CPU / (16 * f) - 1); return { hz: CPU / (16 * (t + 1)), reg: "t=" + hex(t, 3) };
+      },
+      formula: "Pulse 1789773 / (16 (t + 1)) Hz, triangle 1789773 / (32 (t + 1)) Hz with its 32-step staircase and no volume control. Every lead and harmony note has t < 256, so legato only rewrites the low period byte, never the high byte that would restart the waveform. Pulse volume is a software envelope in constant-volume mode, accented on each note. Bends and vibrato are period writes every frame. Around D6 one step of t is about 18 cents, wider than the ±15-cent vibrato, so there the vibrato flickers between neighbouring values. The open hat uses noise mode 1, the short metallic sequence, and the roll climbs six entries up the noise period table as it gets louder."
+    },
+    sms: {
+      voices: {},
+      // Tone 3 can't go below 3579545 / (32 × 1023) ≈ 109 Hz: lower bass notes go up an octave,
+      // unless the bass is periodic noise clocked by tone 3, which sounds a sixteenth of tone 3's pitch.
+      note: (v, m) => (v === "bass" && !smsNoiseBass() && midiHz(m) < PSG / (32 * 1023)) ? m + 12 : m,
+      pitch: (v, f) => {
+        if (v === "bass" && smsNoiseBass()) { const n = Math.round(PSG / (512 * f)); return { hz: PSG / (512 * n), reg: "N=" + hex(n, 3) + " ÷16" }; }
+        const n = Math.max(1, Math.min(1023, Math.round(PSG / (32 * f)))); return { hz: PSG / (32 * n), reg: "N=" + hex(n, 3) };
+      },
+      formula: ""
+    }
+  };
+  const SIDCLK = 985248, POKEY = 1789773, P64 = POKEY / 28, TIA = 3579545 / 114;
+  SYS.c64 = {
+    voices: { lead: "Voice 1, pulse, width sweeping", harm: "Voice 2, sawtooth", bass: "Voice 3, pulse through the filter", drums: "Borrows voice 3 (noise)" },
+    pitch: (v, f) => { const n = Math.round(f * 16777216 / SIDCLK); return { hz: n * SIDCLK / 16777216, reg: "F=" + hex(n, 4) }; },
+    steal: true,
+    formula: "Hypothetical. The SID (6581, PAL clock 985248 Hz) has three voices, each with its own waveform and envelope, at 985248 × F / 16777216 Hz for a 16-bit F, so its pitch is almost exact. The lead is a pulse wave whose width sweeps slowly (pulse-width modulation), the harmony a sawtooth, and the bass a pulse through the resonant low-pass filter, swept down on each note. With no fourth voice, the drums borrow the bass voice for a frame or two at a time and switch it to noise, as C64 composers did; that is also why the crash is a short burst."
+  };
+  SYS.a800 = {
+    voices: { lead: "Channel 3, pure tone, 64 kHz clock", harm: "Channel 4, pure tone, 64 kHz clock", bass: "Channels 1 and 2 joined: 16-bit at 1.79 MHz", drums: "Borrows the bass pair (noise)" },
+    pitch: (v, f) => {
+      if (v === "bass") { const n = Math.round(POKEY / (2 * f) - 7); return { hz: POKEY / (2 * (n + 7)), reg: "N=" + hex(n, 4) }; }
+      const n = Math.max(0, Math.min(255, Math.round(P64 / (2 * f) - 1))); return { hz: P64 / (2 * (n + 1)), reg: "AUDF=" + hex(n, 2) };
+    },
+    steal: true,
+    formula: "Hypothetical. POKEY has four square-wave channels. At the 64 kHz clock a channel sounds 63920 / (2 (AUDF + 1)) Hz with an 8-bit AUDF, so high notes land up to about 20 cents off, POKEY's slightly sour charm, and small bends and vibrato barely move. The bass joins channels 1 and 2 into one 16-bit channel clocked at 1.79 MHz, 1789773 / (2 (N + 7)) Hz, which tunes it closely but uses the fourth channel, so the drums borrow the bass pair. On screen the letters get a colour gradient that changes every scanline and scrolls: the display-list-interrupt trick."
+  };
+  SYS.a2600 = {
+    voices: { lead: "Channel 0, square (AUDC 4)", harm: "No channel left", bass: "Channel 1, AUDC 1 or 6 per note", drums: "Borrows channel 1 (AUDC 8 noise)" },
+    pitch: (v, f) => {
+      if (v === "bass") {
+        let best = null;
+        for (const [audc, len, wave] of [[1, 15, "poly4"], [6, 31, "div31"]]) for (let F = 0; F < 32; F++) {
+          const hz = TIA / (len * (F + 1)), c = Math.abs(cents(hz, f));
+          if (!best || c < best.c) best = { c, hz, wave, reg: `AUDC ${audc}, F=${F}` };
+        }
+        return best;
+      }
+      const F = Math.max(0, Math.min(31, Math.round(TIA / (2 * f) - 1)));
+      return { hz: TIA / (2 * (F + 1)), wave: "p50", reg: `AUDC 4, F=${F}` };
+    },
+    steal: true, noHarm: true,
+    formula: "Hypothetical. The TIA has two channels, each with a 5-bit divider (32 settings) and a 4-bit waveform select, so most notes can't be tuned. The lead uses the square wave (AUDC 4, 31400 / (2 (F + 1)) Hz), and D6 comes out almost half a semitone sharp. The bass picks, per note, whichever of two buzzier waveforms gets closer: AUDC 1 (a 15-step pattern) or AUDC 6 (31 steps). Two channels leave no room for the harmony, and the drums borrow the bass channel. Bends and vibrato are left out, since with 32 pitches they would be jumps. The picture follows the playfield's rule of one colour per scanline, and the threads, which would need sprites the 2600 doesn't have spare, are gone."
+  };
+  const AYCLK = 894886, ZXRATE = 3500000 / 192, GBARATE = 13379, GBABASE = GBARATE / 64;
+  SYS.coleco = {
+    voices: { lead: "Tone 1, square", harm: "Tone 2, square", bass: "Tone 3, square", drums: "Noise, white (15-bit)" },
+    note: (v, m) => (v === "bass" && midiHz(m) < PSG / (32 * 1023)) ? m + 12 : m,
+    pitch: (v, f) => { const n = Math.max(1, Math.min(1023, Math.round(PSG / (32 * f)))); return { hz: PSG / (32 * n), reg: "N=" + hex(n, 3) }; },
+    formula: "Hypothetical. The ColecoVision uses Texas Instruments' SN76489, the chip the Master System's sound is based on, at the same 3.58 MHz clock: three square-wave tones at 3579545 / (32 N) Hz and one noise channel. So the music matches the Master System's default setting note for note, with the same octave shifts for low bass notes (marked ↑8). The noise comes from TI's 15-bit shift register rather than Sega's 16-bit one, a slightly different hiss. On screen, the TMS9918's colour rule: each 8-pixel row segment can hold only two colours, so where a thread meets the ring, one colour wins."
+  };
+  SYS.intv = {
+    voices: { lead: "Channel A, square", harm: "Channel B, square", bass: "Channel C, envelope as waveform (buzzer)", drums: "Borrows channel C (noise)" },
+    pitch: (v, f) => {
+      if (v === "bass") { const n = Math.max(1, Math.round(AYCLK / (256 * f))); return { hz: AYCLK / (256 * n), reg: "EP=" + hex(n, 4) }; }
+      const n = Math.max(1, Math.min(4095, Math.round(AYCLK / (16 * f)))); return { hz: AYCLK / (16 * n), reg: "TP=" + hex(n, 3) };
+    },
+    steal: true,
+    formula: "Hypothetical. The Intellivision's AY-3-8914 (a General Instrument PSG, kin to the AY-3-8910) has three square-wave tones, one noise source and one envelope generator, with logarithmic 4-bit volume. Assuming it runs at the CPU's 894886 Hz clock, a tone sounds 894886 / (16 TP) Hz with a 12-bit TP. The lead and harmony are tones. The bass uses the envelope generator as a waveform, a repeating ramp at bass pitch of about 894886 / (256 EP) Hz, the AY's 'buzzer' trick, and the drums borrow channel C for noise. On screen, one foreground colour per 8 × 8 card."
+  };
+  SYS.zx = {
+    voices: { lead: "Beeper, pin-pulse voice 1", harm: "Beeper, pin-pulse voice 2", bass: "Beeper, pin-pulse voice 3", drums: "Interrupting drums" },
+    pitch: (v, f) => { const n = Math.round(f * 65536 / ZXRATE); return { hz: n * ZXRATE / 65536, reg: "step=" + hex(n, 4) }; },
+    render: true, rerenderOnMute: true,
+    formula: "Hypothetical, and the strangest one: the 48K Spectrum has no sound chip, only a one-bit beeper the CPU toggles itself. Music engines fake several voices by mixing very short pulses ('pin pulses') from each voice into the one bit, a pulse's width standing in for its volume, so all three voices play, thin and buzzy. This one updates about 18,230 times a second (an engine loop of 192 cycles at 3.5 MHz, assumed) with 16-bit pitch counters, so it tunes closely. The drums are interrupting drums: the tone loop stops for a few milliseconds while the CPU plays noise, so every hit cuts all three voices, and the roll's crescendo is its bursts getting longer. Muting a voice re-renders the mix. On screen, colours are per 8 × 8 cell (attribute clash), and the border flashes with the drums, which engines often do because the beeper and the border colour share one output port. A 128K Spectrum's AY chip would sound much like the Intellivision."
+  };
+  SYS.gba = {
+    voices: { lead: "Direct Sound: flute sample", harm: "Direct Sound: string ensemble", bass: "Direct Sound: plucked bass", drums: "Direct Sound: drum kit samples" },
+    pitch: (v, f) => ({ hz: f, reg: "rate ×" + (f / GBABASE).toFixed(3) }),
+    render: true,
+    formula: "Hypothetical. The Game Boy Advance plays music mostly through Direct Sound: two 8-bit sample channels that a software engine fills. Here that is modelled on Nintendo's own 'm4a' engine, which commonly mixes sampled instruments at 13379 Hz and adds its built-in reverb. So the instruments are samples, not waveforms: a flute-like lead with vibrato, a two-layer string ensemble for the harmony, a plucked bass, and a sampled kit whose snare roll speeds up, rises and swells into a crash cymbal. Pitch is a sample's playback rate, so it is nearly exact; the engine has vibrato but no portamento. The mix is rendered at 13379 Hz and rounded to 8 bits, the source of the GBA's slightly grainy sound. On screen, 15-bit colour, translucent threads (alpha blending), and the hardware mosaic effect clearing during the first beat."
+  };
+  function smsLabels() {
+    const nb = smsNoiseBass();
+    SYS.sms.voices = { lead: "Tone 1, square", harm: "Tone 2, square",
+      bass: nb ? "Noise, periodic, clocked by tone 3" : "Tone 3, square", drums: nb ? "No channel left" : "Noise, white" };
+    SYS.sms.formula = "Hypothetical. The Master System's SN76489 has three square-wave tones, 3579545 / (32 N) Hz with a 10-bit N, and one noise channel. Volume is 4-bit attenuation in 2 dB steps with no hardware envelopes, so every envelope, bend and vibrato here is software, written per frame. " +
+      (nb ? "The bass uses the classic trick: noise in periodic mode clocked by a silenced tone 3 sounds a sixteenth of tone 3's pitch as a thin, buzzy pulse that reaches the low notes. The noise channel is then taken, so the drums drop out."
+          : "Tone 3 can't go below about 109 Hz, so bass notes under A2 move up an octave (marked ↑8 in the roll). The drums use white noise at the chip's fixed shift rates of 1748, 3496 and 6991 Hz, which gives the Master System its soft, dull percussion. With only three rates, the roll can climb in just two pitch steps; its rise is mostly volume.");
+  }
+  smsLabels();
+  const noteOf = (v, m) => SYS[sys].note ? SYS[sys].note(v, m) : m;
+
+  const LANES = [
+    { v: "lead", label: "Lead", color: "--amber" },
+    { v: "harm", label: "Harmony", color: "--teal" },
+    { v: "bass", label: "Bass", color: "--violet" },
+    { v: "drums", label: "Drums", color: "--muted" }
+  ];
+
+  let sys = "gb";
+  const muted = { lead: false, harm: false, bass: false, drums: false, buzz: false };
+  let ctx = null, master = null, run = null;
+  const waves = {}, noiseBufs = {};
+
+  // ---------- CHIP-8 rhythm, derived from the lead (frames at 150 bpm) ----------
+  const CHIP8 = SCORE.lead.map(([s, e], i) => ({
+    s, frames: i === SCORE.lead.length - 1 ? 30 : Math.max(3, Math.min(12, Math.round((e - s) * 0.4 * 24)))
+  }));
+  // ---------- Audio: waveforms ----------
+  // Fourier series of a piecewise-constant period: exact for a hardware staircase.
+  function stepWave(samples) {
+    const H = 120, L = samples.length, mean = samples.reduce((a, b) => a + b, 0) / L;
+    const re = new Float32Array(H + 1), im = new Float32Array(H + 1);
+    for (let n = 1; n <= H; n++) {
+      let a = 0, b = 0;
+      for (let i = 0; i < L; i++) {
+        const t0 = 2 * Math.PI * i / L, t1 = 2 * Math.PI * (i + 1) / L, v = samples[i] - mean;
+        a += v * (Math.sin(n * t1) - Math.sin(n * t0)) / n;
+        b += v * (Math.cos(n * t0) - Math.cos(n * t1)) / n;
+      }
+      re[n] = a / Math.PI; im[n] = b / Math.PI;
+    }
+    return ctx.createPeriodicWave(re, im);
+  }
+  function buildWaves() {
+    waves.p25 = stepWave([1,0,0,0,0,0,0,1]);
+    waves.p50 = stepWave([1,1,1,1,0,0,0,0]);
+    waves.aySaw = stepWave(Array.from({ length: 16 }, (_, i) => Math.pow(2, (i - 15) / 2)));   // AY envelope ramp, log levels
+    waves.poly4 = stepWave([1,1,1,1,0,0,0,1,0,0,1,1,0,1,0]);                // TIA AUDC 1: the 4-bit poly's 15 steps
+    waves.div31 = stepWave(Array.from({ length: 31 }, (_, i) => i < 18 ? 1 : 0)); // TIA AUDC 6: 18 high, 13 low
+    waves.p16 = stepWave([1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);   // periodic noise: one bit in sixteen
+    const sine4 = []; for (let i = 0; i < 32; i++) sine4.push(Math.round(7.5 + 7.5 * Math.sin(2 * Math.PI * (i + 0.5) / 32)));
+    waves.gbWave = stepWave(sine4);
+    const tri = []; for (let i = 0; i < 16; i++) tri.push(15 - i); for (let i = 0; i < 16; i++) tri.push(i);
+    waves.nesTri = stepWave(tri);
+  }
+  // 15-bit LFSR noise, the shape the Game Boy and NES share: bit0 xor bit1 into bit 14.
+  // short = the metallic mode: Game Boy 7-bit width (feedback also into bit 6), NES mode 1 (taps 0 and 6).
+  function lfsrBuffer(rate, seconds, short, nes) {
+    const key = rate + ":" + seconds + ":" + (short ? (nes ? "n" : "g") : ""); if (noiseBufs[key]) return noiseBufs[key];
+    const sr = ctx.sampleRate, n = Math.floor(sr * seconds);
+    const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    let reg = 1, acc = 0; const step = rate / sr;
+    for (let i = 0; i < n; i++) {
+      acc += step;
+      while (acc >= 1) {
+        acc -= 1;
+        const fb = (reg ^ (reg >> (short && nes ? 6 : 1))) & 1;
+        reg = (reg >> 1) | (fb << 14);
+        if (short && !nes) reg = (reg & ~0x40) | (fb << 6);
+      }
+      d[i] = (reg & 1) ? -1 : 1;
+    }
+    return (noiseBufs[key] = buf);
+  }
+  // SN76489 white noise: 16-bit LFSR, taps 0 and 3, fixed shift rates of clock / 512, / 1024, / 2048.
+  function smsNoiseBuffer(rate, seconds) {
+    const key = "sms:" + rate; if (noiseBufs[key]) return noiseBufs[key];
+    const sr = ctx.sampleRate, n = Math.floor(sr * seconds);
+    const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    let reg = 0x8000, acc = 0; const step = rate / sr;
+    for (let i = 0; i < n; i++) {
+      acc += step;
+      while (acc >= 1) { acc -= 1; const fb = (reg ^ (reg >> 3)) & 1; reg = (reg >> 1) | (fb << 15); }
+      d[i] = (reg & 1) ? 1 : -1;
+    }
+    return (noiseBufs[key] = buf);
+  }
+  function whiteBuffer(seconds) {
+    const key = "white:" + seconds; if (noiseBufs[key]) return noiseBufs[key];
+    const sr = ctx.sampleRate, n = Math.floor(sr * seconds);
+    const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    return (noiseBufs[key] = buf);
+  }
+  function ensureAudio() {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 14000;
+      const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 30;
+      master = ctx.createGain(); master.gain.value = 0.85;
+      master.connect(lp); lp.connect(hp); hp.connect(ctx.destination);
+      buildWaves();
+    }
+    if (ctx.state === "suspended") ctx.resume();
+  }
+
+  // ---------- Legato voices ----------
+  // Consecutive notes form one phrase: one oscillator, frequency changed in place, never restarted.
+  function phrases(notes) {
+    const out = []; let cur = null;
+    for (const n of notes) {
+      if (cur && Math.abs(cur[cur.length - 1][1] - n[0]) < 1e-6) cur.push(n);
+      else { cur = [n]; out.push(cur); }
+    }
+    return out;
+  }
+  function playVoice(bus, v, wave, peak, level, t0, beat, opts = {}) {
+    const P = SYS[sys];
+    for (const ph of phrases(SCORE[v])) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      if (typeof wave === "string") o.type = wave; else o.setPeriodicWave(wave);
+      const T = t => t0 + t * beat;
+      const events = [];
+      let out = o;
+      if (opts.pwm) {
+        // SID pulse with a moving width: a sawtooth minus itself delayed by width / f
+        o.type = "sawtooth";
+        const d = ctx.createDelay(0.05), inv = ctx.createGain(), mix = ctx.createGain();
+        inv.gain.value = -1;
+        o.connect(mix); o.connect(d); d.connect(inv); inv.connect(mix);
+        out = mix; opts._delay = d;
+      }
+      if (opts.chain) out = opts.chain(out, ph, T);
+      const start = t0 + ph[0][0] * beat, stop = t0 + ph[ph.length - 1][1] * beat;
+      // Pitch is written once per frame, as a sound driver would, so every bend and vibrato
+      // lands on the chip's real period steps. Melodic voices glide into each new note
+      // (portamento), scoop up into the first note of a phrase, and add vibrato to held notes.
+      const melodic = v !== "bass", FR = sys === "pure" ? 1 / 240 : 1 / 60;
+      const q = f => P.pitch(v, f).hz, set = (f, t) => { const hz = q(f); o.frequency.setValueAtTime(hz, t); events.push([t, hz]); };
+      let prevF = null;
+      for (const [a, e, m0] of ph) {
+        const f = midiHz(noteOf(v, m0)), ta = t0 + a * beat, te = t0 + e * beat, dur = te - ta;
+        let t = ta;
+        if (melodic && !opts.noBends) {
+          const from = prevF ?? f * Math.pow(2, -40 / 1200);
+          const G = prevF ? Math.min(0.04, dur * 0.2) : 0.035;
+          for (; t < ta + G; t += FR) {
+            const u = (t - ta) / G, ease = 1 - (1 - u) * (1 - u);
+            set(from * Math.pow(f / from, ease), t);
+          }
+        }
+        set(f, t);
+        if (melodic && !opts.noBends && dur >= 0.3) {
+          const last = e === END, depth = last ? 20 : 15, delay = last ? 0.2 : 0.11, rate = 5.8;
+          for (let tt = ta + delay; tt < te; tt += FR) {
+            const w = Math.min(1, (tt - ta - delay) / 0.18);
+            set(f * Math.pow(2, depth * w * Math.sin(2 * Math.PI * rate * (tt - ta - delay)) / 1200), tt);
+          }
+        }
+        prevF = f;
+      }
+      if (opts.pwm) {
+        // width 0.25 to 0.75 and back, a slow triangle sweep, written once a frame
+        events.sort((x, y) => x[0] - y[0]);
+        let k = 0, hz = events[0][1];
+        for (let t = start; t < stop; t += 1 / 60) {
+          while (k < events.length && events[k][0] <= t) hz = events[k++][1];
+          const ph2 = ((t - start) * 0.9) % 2, w = 0.25 + 0.5 * (ph2 < 1 ? ph2 : 2 - ph2);
+          opts._delay.delayTime.setValueAtTime(w / hz, t);
+        }
+      }
+      g.gain.setValueAtTime(0, 0);
+      level(g.gain, ph, T, peak);
+      out.connect(g); g.connect(bus);
+      o.start(start); o.stop(stop + 0.15);
+      run.nodes.push(o);
+    }
+  }
+  const lv = (peak, v) => peak * v / 15;
+  // Game Boy: constant volume through a phrase; the last note retriggers with a decaying envelope.
+  const gbLevel = (vol, finalEnvSteps) => (g, ph, T, peak) => {
+    g.setValueAtTime(lv(peak, vol), T(ph[0][0]));
+    const last = ph[ph.length - 1];
+    if (last[1] === END) {
+      let v = vol + 1, t = T(last[0]); const step = finalEnvSteps / 64;
+      while (v > 0 && t < T(END)) { g.setValueAtTime(lv(peak, v), t); v--; t += step; }
+    }
+    g.setValueAtTime(0, T(last[1]));
+  };
+  // NES: software envelope per frame in constant-volume mode, accented at each note.
+  const nesLevel = (acc, sus) => (g, ph, T, peak) => {
+    for (const [a, e] of ph) {
+      let v = acc, t = T(a);
+      while (t < T(e)) {
+        g.setValueAtTime(lv(peak, v), t);
+        if (v > sus) v--;
+        else if (e === END && t > T(a) + (T(e) - T(a)) * 0.45) v = Math.max(0, v - 1);
+        t += (e === END && v <= sus) ? 4 / 60 : 1 / 60;
+      }
+    }
+    g.setValueAtTime(0, T(ph[ph.length - 1][1]));
+  };
+  // Master System: 4-bit attenuation, 2 dB a step, written per frame (no hardware envelope).
+  const att = (peak, a) => a >= 15 ? 0 : peak * Math.pow(10, -a / 10);
+  const smsLevel = (accent, sus) => (g, ph, T, peak) => {
+    for (const [a, e] of ph) {
+      let n = accent, t = T(a);
+      while (t < T(e)) {
+        g.setValueAtTime(att(peak, n), t);
+        if (n < sus) n++;
+        else if (e === END && t > T(a) + (T(e) - T(a)) * 0.4) n = Math.min(15, n + 1);
+        t += (e === END && n >= sus) ? 4 / 60 : 2 / 60;
+      }
+    }
+    g.setValueAtTime(0, T(ph[ph.length - 1][1]));
+  };
+  // SID: attack, decay to sustain, held through the phrase (legato never re-gates); the last note releases.
+  const sidLevel = (g, ph, T, peak) => {
+    const t = T(ph[0][0]), last = ph[ph.length - 1];
+    g.setValueAtTime(0, t); g.linearRampToValueAtTime(peak, t + 0.006);
+    g.setTargetAtTime(peak * 0.7, t + 0.006, 0.09);
+    if (last[1] === END) g.setTargetAtTime(0, T(last[0]) + (T(END) - T(last[0])) * 0.45, 0.25);
+    g.setTargetAtTime(0, T(last[1]) - 0.02, 0.01);
+  };
+  // AY: 4-bit volume, about 3 dB a step, written per frame.
+  const ayAmp = (peak, v) => v <= 0 ? 0 : peak * Math.pow(2, (v - 15) / 2);
+  const ayLevel = (acc, sus) => (g, ph, T, peak) => {
+    for (const [a, e] of ph) {
+      let v = acc, t = T(a);
+      while (t < T(e)) {
+        g.setValueAtTime(ayAmp(peak, v), t);
+        if (v > sus) v--;
+        else if (e === END && t > T(a) + (T(e) - T(a)) * 0.45) v = Math.max(0, v - 1);
+        t += (e === END && v <= sus) ? 4 / 60 : 1 / 60;
+      }
+    }
+    g.setValueAtTime(0, T(ph[ph.length - 1][1]));
+  };
+  // Triangle and wave bass: on or off.
+  const flatLevel = (g, ph, T, peak) => { g.setValueAtTime(peak, T(ph[0][0])); g.setValueAtTime(0, T(ph[ph.length - 1][1])); };
+  // Pure: smooth, a light swell on each note.
+  const pureLevel = (g, ph, T, peak) => {
+    g.setValueAtTime(0, T(ph[0][0]));
+    for (const [a, e] of ph) {
+      g.setTargetAtTime(peak, T(a), 0.012);
+      g.setTargetAtTime(peak * 0.78, T(a) + 0.05, 0.12);
+      if (e === END) g.setTargetAtTime(0, T(a) + (T(e) - T(a)) * 0.45, 0.22);
+    }
+    g.setTargetAtTime(0, T(ph[ph.length - 1][1]) - 0.03, 0.015);
+  };
+
+  // ---------- Drums: one noise channel, a new hit cuts the last ----------
+  // Roll pitches climb through each chip's real noise settings, one step per roll stage.
+  const GB_ROLL = [16384, 21845, 26214, 32768, 43690, 65536];               // 524288 / (r × 2^(s+1))
+  const NES_ROLL = [508, 380, 254, 202, 160, 128].map(p => CPU / p);       // noise period table entries
+  function drumSpec(k, r) {
+    if (sys === "gb") return {
+      kick: [8192, 1], snare: [32768, 2], ghost: [32768, 1], hat: [262144, 1], ohat: [131072, 3, true],
+      roll: [GB_ROLL[r], 1], crash: [16384, 6] }[k];
+    return {
+      kick: [CPU / 1016, 3], snare: [CPU / 160, 6], ghost: [CPU / 160, 2], hat: [CPU / 16, 2], ohat: [CPU / 32, 8, true],
+      roll: [NES_ROLL[r], 3], crash: [CPU / 202, 14] }[k];
+  }
+  function playDrums(bus, t0, beat) {
+    DRUMS.forEach(([b, k, vol, r], i) => {
+      const t = t0 + b * beat, next = i + 1 < DRUMS.length ? t0 + DRUMS[i + 1][0] * beat : t + 2.5;
+      if (sys === "pure") return pureDrum(bus, k, vol, t, next, r);
+      if (sys === "sms" || sys === "coleco") return smsDrum(bus, k, vol, t, next, r);
+      const [rate, step, short] = drumSpec(k, r);
+      const unit = sys === "gb" ? 1 / 64 : 1 / 240;
+      const src = ctx.createBufferSource(), g = ctx.createGain();
+      src.buffer = lfsrBuffer(rate, 2.5, short, sys === "nes");
+      g.gain.setValueAtTime(0, 0);
+      let v = vol, tt = t; const peak = sys === "gb" ? 0.11 : 0.1;
+      while (v > 0 && tt < next) { g.gain.setValueAtTime(lv(peak, v), tt); v--; tt += step * unit; }
+      g.gain.setValueAtTime(0, Math.min(tt, next));
+      src.connect(g); g.connect(bus); src.start(t); src.stop(Math.min(tt, next) + 0.05);
+      run.nodes.push(src);
+    });
+  }
+  function smsDrum(bus, k, vol, t, next, r) {
+    if (sys === "sms" && smsNoiseBass()) return;
+    const [rate, frames] = {
+      kick: [PSG / 2048, 1], snare: [PSG / 1024, 2], ghost: [PSG / 1024, 1], hat: [PSG / 512, 1], ohat: [PSG / 512, 3],
+      roll: [PSG / [2048, 2048, 1024, 1024, 512, 512][r || 0], 1], crash: [PSG / 512, 5] }[k];
+    const src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = sys === "coleco" ? polyBuffer(15, 1, rate, 2.5) : smsNoiseBuffer(rate, 2.5);
+    g.gain.setValueAtTime(0, 0);
+    let a = 15 - vol, tt = t;
+    while (a < 15 && tt < next) { g.gain.setValueAtTime(att(0.13, a), tt); a++; tt += frames / 60; }
+    g.gain.setValueAtTime(0, Math.min(tt, next));
+    src.connect(g); g.connect(bus); src.start(t); src.stop(Math.min(tt, next) + 0.05);
+    run.nodes.push(src);
+  }
+  function pureDrum(bus, k, vol, t, next, r) {
+    const g = ctx.createGain(); g.connect(bus); g.gain.setValueAtTime(0, 0);
+    const amp = vol / 15;
+    if (k === "kick") {
+      const o = ctx.createOscillator(); o.type = "sine";
+      o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+      g.gain.setValueAtTime(0.32 * amp, t); g.gain.setTargetAtTime(0, t + 0.02, 0.05);
+      o.connect(g); o.start(t); o.stop(Math.min(next, t + 0.3)); run.nodes.push(o); return;
+    }
+    const f = ctx.createBiquadFilter(), s = ctx.createBufferSource();
+    s.buffer = whiteBuffer(2.5);
+    const cfg = { snare: ["bandpass", 1900, 0.09, 0.05], ghost: ["bandpass", 1900, 0.09, 0.025],
+      hat: ["highpass", 7500, 0.05, 0.012], ohat: ["highpass", 6500, 0.05, 0.09],
+      roll: ["bandpass", 1500 * Math.pow(1.3, r || 0), 0.1, 0.03], crash: ["highpass", 3800, 0.1, 0.55] }[k];
+    f.type = cfg[0]; f.frequency.value = cfg[1];
+    g.gain.setValueAtTime(cfg[2] * amp, t); g.gain.setTargetAtTime(0, t + 0.005, cfg[3]);
+    s.connect(f); f.connect(g); s.start(t); s.stop(Math.min(next, t + 2.4)); run.nodes.push(s);
+  }
+
+  function tiaVoice(bus, v, peak, t0, beat) {
+    const P = SYS.a2600;
+    for (const [a, e, m] of SCORE[v]) {
+      const r = P.pitch(v, midiHz(m)), ta = t0 + a * beat, te = t0 + e * beat;
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.setPeriodicWave(waves[r.wave]); o.frequency.value = r.hz;
+      g.gain.setValueAtTime(0, 0);
+      let vol = 12;
+      for (let t = ta; t < te; t += 1 / 60) {
+        g.gain.setValueAtTime(lv(peak, vol), t);
+        if (vol > 10) vol--;
+        else if (e === END && t > ta + (te - ta) * 0.45) vol = Math.max(0, vol - 1);
+      }
+      g.gain.setValueAtTime(0, te);
+      o.connect(g); g.connect(bus); o.start(ta); o.stop(te + 0.05); run.nodes.push(o);
+    }
+  }
+  // Generic polynomial-counter noise: width-bit register, feedback bit0 xor bit `tap` into the top.
+  function polyBuffer(width, tap, rate, seconds) {
+    const key = `poly:${width}:${tap}:${Math.round(rate)}`; if (noiseBufs[key]) return noiseBufs[key];
+    const sr = ctx.sampleRate, n = Math.floor(sr * seconds);
+    const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    let reg = 1, acc = 0; const step = rate / sr;
+    for (let i = 0; i < n; i++) {
+      acc += step;
+      while (acc >= 1) { acc -= 1; const fb = (reg ^ (reg >> tap)) & 1; reg = (reg >> 1) | (fb << (width - 1)); }
+      d[i] = (reg & 1) ? 1 : -1;
+    }
+    return (noiseBufs[key] = buf);
+  }
+  // Drums on machines with no spare channel: each hit borrows the bass voice for a few frames
+  // (the bass goes silent through `duck`) and plays noise in its place.
+  function stealDrums(drumBus, duck, t0, beat) {
+    const spec = {
+      c64:   { noise: (k, r) => ({ kick: 6000, snare: 12000, hat: 44000, roll: 9000 * Math.pow(1.25, r), crash: 22000 }[k]), poly: [23, 5] },
+      a800:  { noise: (k, r) => ({ kick: 1800, snare: 7000, hat: 30000, roll: 6000 * Math.pow(1.3, r), crash: 16000 }[k]), poly: [17, 5] },
+      intv:  { noise: (k, r) => AYCLK / (16 * ({ kick: 31, snare: 12, hat: 1, crash: 5 }[k] ?? [20, 16, 12, 9, 6, 4][r])), poly: [17, 3] },
+      a2600: { noise: (k, r) => TIA / (({ kick: 31, snare: 6, hat: 0, crash: 3 }[k] ?? [10, 8, 6, 4, 3, 2][r]) + 1), poly: [9, 4] }
+    }[sys];
+    DRUMS.forEach(([b, k, vol, r], i) => {
+      const t = t0 + b * beat, gap = i + 1 < DRUMS.length ? (DRUMS[i + 1][0] - b) * beat : 1;
+      const frames = { kick: 3, snare: 4, hat: 1, crash: 6, roll: gap < 0.06 ? 1 : 2 }[k];
+      const dur = Math.min(frames / 60, gap);
+      duck.gain.setValueAtTime(0, t); duck.gain.setValueAtTime(1, t + dur);
+      const src = ctx.createBufferSource(), g = ctx.createGain();
+      src.buffer = polyBuffer(spec.poly[0], spec.poly[1], spec.noise(k, r || 0), 0.6);
+      g.gain.setValueAtTime(0, 0);
+      let v = vol;
+      for (let tt = t; tt < t + dur; tt += 1 / 60) { g.gain.setValueAtTime(lv(0.13, v), tt); v = Math.max(0, v - 3); }
+      g.gain.setValueAtTime(0, t + dur);
+      src.connect(g); g.connect(drumBus); src.start(t); src.stop(t + dur + 0.02); run.nodes.push(src);
+      if (k === "kick" && sys === "c64") {   // the SID kick: a pulse swept down after the noise
+        const o = ctx.createOscillator(), og = ctx.createGain();
+        o.setPeriodicWave(waves.p50);
+        o.frequency.setValueAtTime(180, t + 1 / 60); o.frequency.exponentialRampToValueAtTime(55, t + dur);
+        og.gain.setValueAtTime(0, 0); og.gain.setValueAtTime(lv(0.13, vol), t + 1 / 60); og.gain.setValueAtTime(0, t + dur);
+        o.connect(og); og.connect(drumBus); o.start(t); o.stop(t + dur + 0.02); run.nodes.push(o);
+      }
+    });
+  }
+
+  function scheduleRound(t0, beat) {
+    const G = run.gains;
+    if (sys === "chip8") {
+      for (const n of CHIP8) {
+        const t = t0 + Math.round(n.s * beat * 60) / 60;
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.setPeriodicWave(waves.p50); o.frequency.value = 440;
+        g.gain.setValueAtTime(0, 0); g.gain.setValueAtTime(0.12, t); g.gain.setValueAtTime(0, t + n.frames / 60);
+        o.connect(g); g.connect(G.buzz); o.start(t); o.stop(t + n.frames / 60 + 0.05); run.nodes.push(o);
+      }
+      return;
+    }
+    if (sys === "pure") {
+      playVoice(G.lead, "lead", "sine", 0.17, pureLevel, t0, beat);
+      playVoice(G.harm, "harm", "sine", 0.15, pureLevel, t0, beat);
+      playVoice(G.bass, "bass", "sine", 0.3, pureLevel, t0, beat);
+    } else if (sys === "gb") {
+      playVoice(G.lead, "lead", waves.p25, 0.15, gbLevel(11, 6), t0, beat);
+      playVoice(G.harm, "harm", waves.p50, 0.15, gbLevel(10, 7), t0, beat);
+      playVoice(G.bass, "bass", waves.gbWave, 0.22, flatLevel, t0, beat);
+    } else if (SYS[sys].render) {
+      for (const [name, buf] of Object.entries(run.stems)) {
+        const src = ctx.createBufferSource(); src.buffer = buf;
+        let dest = G[name] || run.bus;
+        if (sys === "zx") { const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 6000; lp.connect(run.bus); dest = lp; }
+        src.connect(dest); src.start(t0); run.nodes.push(src);
+      }
+      return;
+    } else if (sys === "sms" || sys === "coleco") {
+      playVoice(G.lead, "lead", waves.p50, 0.13, smsLevel(1, 3), t0, beat);
+      playVoice(G.harm, "harm", waves.p50, 0.13, smsLevel(2, 4), t0, beat);
+      if (sys === "sms" && smsNoiseBass()) playVoice(G.bass, "bass", waves.p16, 0.22, smsLevel(0, 1), t0, beat);
+      else playVoice(G.bass, "bass", waves.p50, 0.16, smsLevel(0, 2), t0, beat);
+    } else if (SYS[sys].steal) {
+      const duck = ctx.createGain(); duck.connect(G.bass);
+      if (sys === "c64") {
+        const sweep = (src, ph, T) => {
+          const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.Q.value = 6;
+          for (const [a] of ph) { f.frequency.setValueAtTime(1700, T(a)); f.frequency.setTargetAtTime(480, T(a), 0.07); }
+          src.connect(f); return f;
+        };
+        playVoice(G.lead, "lead", "sawtooth", 0.075, sidLevel, t0, beat, { pwm: true });
+        playVoice(G.harm, "harm", "sawtooth", 0.1, sidLevel, t0, beat);
+        playVoice(duck, "bass", waves.p50, 0.2, sidLevel, t0, beat, { chain: sweep });
+      } else if (sys === "intv") {
+        playVoice(G.lead, "lead", waves.p50, 0.13, ayLevel(14, 12), t0, beat);
+        playVoice(G.harm, "harm", waves.p50, 0.13, ayLevel(13, 11), t0, beat);
+        playVoice(duck, "bass", waves.aySaw, 0.17, flatLevel, t0, beat);
+      } else if (sys === "a800") {
+        playVoice(G.lead, "lead", waves.p50, 0.13, nesLevel(12, 9), t0, beat);
+        playVoice(G.harm, "harm", waves.p50, 0.13, nesLevel(11, 8), t0, beat);
+        playVoice(duck, "bass", waves.p50, 0.17, nesLevel(13, 11), t0, beat);
+      } else {
+        tiaVoice(G.lead, "lead", 0.13, t0, beat);
+        tiaVoice(duck, "bass", 0.17, t0, beat);
+      }
+      stealDrums(G.drums, duck, t0, beat);
+      return;
+    } else {
+      playVoice(G.lead, "lead", waves.p25, 0.14, nesLevel(12, 9), t0, beat);
+      playVoice(G.harm, "harm", waves.p50, 0.14, nesLevel(11, 8), t0, beat);
+      playVoice(G.bass, "bass", waves.nesTri, 0.27, flatLevel, t0, beat);
+    }
+    playDrums(G.drums, t0, beat);
+  }
+
+  // ---------- Pre-rendered machines: the Spectrum's one-bit engine and the GBA's sample mixer ----------
+  const renderCache = new Map();
+  // Frequency at time t (s from the round's start) for a voice, with glides and vibrato as the
+  // chip machines have them; `bends` false gives vibrato only (the GBA engine has no portamento).
+  function pitchTrack(v, beat, bends) {
+    const notes = SCORE[v], P = SYS[sys];
+    return t => {
+      const b = t / beat, i = notes.findIndex(([a, e]) => b >= a && b < e);
+      if (i < 0) return null;
+      const [a, e, m] = notes[i], f = midiHz(noteOf(v, m)), ta = a * beat, te = e * beat, dur = te - ta;
+      let hz = f;
+      if (v !== "bass" && bends) {
+        const prev = i > 0 && notes[i - 1][1] === a ? midiHz(noteOf(v, notes[i - 1][2])) : f * Math.pow(2, -40 / 1200);
+        const G = i > 0 && notes[i - 1][1] === a ? Math.min(0.04, dur * 0.2) : 0.035;
+        if (t - ta < G) { const u = (t - ta) / G; hz = prev * Math.pow(f / prev, 1 - (1 - u) * (1 - u)); }
+      }
+      if (v !== "bass" && dur >= 0.3) {
+        const last = e === END, depth = last ? 20 : 15, dl = last ? 0.2 : 0.11;
+        if (t - ta > dl) { const w = Math.min(1, (t - ta - dl) / 0.18); hz *= Math.pow(2, depth * w * Math.sin(2 * Math.PI * 5.8 * (t - ta - dl)) / 1200); }
+      }
+      return { hz: P.pitch(v, hz).hz, ta, te, last: e === END };
+    };
+  }
+  function renderZX(beat) {
+    const sr = ctx.sampleRate, len = Math.ceil((END * beat + 0.4) * sr);
+    const buf = ctx.createBuffer(1, len, sr), d = buf.getChannelData(0);
+    const voices = ["lead", "harm", "bass"].filter(v => !muted[v]).map(v => ({
+      v, track: pitchTrack(v, beat, true), phase: 0, pulse: 0, step: 0, width: 0, startOf: -1,
+      wmax: { lead: 5, harm: 4, bass: 7 }[v]
+    }));
+    const hits = muted.drums ? [] : DRUMS.map(([b, k, vol]) => ({ t: b * beat, k, vol,
+      len: { kick: 0.012, snare: 0.016, hat: 0.003, crash: 0.05, roll: 0.0015 + vol * 0.00035 }[k] }));
+    let acc = 0, frameT = -1, bit = 0, kickPhase = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      acc += ZXRATE / sr;
+      // once a frame (50 Hz), the engine reads new pitches and pulse widths
+      if (Math.floor(t * 50) !== frameT) {
+        frameT = Math.floor(t * 50);
+        for (const vo of voices) {
+          const p = vo.track(t);
+          if (!p) { vo.width = 0; continue; }
+          vo.step = Math.round(p.hz * 65536 / ZXRATE);
+          let w = vo.wmax;
+          if (p.last) { const u = (t - p.ta) / (p.te - p.ta); if (u > 0.45) w = Math.round(vo.wmax * Math.max(0, 1 - (u - 0.45) / 0.55)); }
+          vo.width = w;
+        }
+      }
+      const hit = hits.find(h => t >= h.t && t < h.t + h.len);
+      while (acc >= 1) {
+        acc -= 1;
+        if (hit) {
+          const u = (t - hit.t) / hit.len;
+          if (hit.k === "kick") { kickPhase += 1 / (18 + 60 * u); bit = (Math.floor(kickPhase) & 1); }
+          else bit = Math.random() < (hit.k === "crash" ? 0.5 * (1 - u) : 0.5) ? 1 : 0;
+          continue;   // interrupting drums: the tone loop is stopped
+        }
+        bit = 0;
+        for (const vo of voices) {
+          if (!vo.width) continue;
+          vo.phase += vo.step;
+          if (vo.phase >= 65536) { vo.phase -= 65536; vo.pulse = vo.width; }
+          if (vo.pulse > 0) { bit = 1; vo.pulse--; }
+        }
+      }
+      d[i] = bit ? 0.16 : -0.16;
+    }
+    // remove the DC a one-bit signal carries
+    let mean = 0; for (let i = 0; i < len; i++) mean += d[i]; mean /= len;
+    for (let i = 0; i < len; i++) d[i] -= mean;
+    return Promise.resolve({ mix: buf });
+  }
+  // GBA instruments as 8-bit-era samples at 13379 Hz
+  let gbaSamples = null;
+  function gbaKit() {
+    if (gbaSamples) return gbaSamples;
+    const mk = (n, fn) => { const b = ctx.createBuffer(1, n, GBARATE), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = fn(i, n); return b; };
+    const cyc = harmonics => mk(64, i => harmonics.reduce((a, [h, amp]) => a + amp * Math.sin(2 * Math.PI * h * i / 64), 0));
+    let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x3fffffff - 1;
+    let last = 0;
+    gbaSamples = {
+      flute: cyc([[1, 0.8], [2, 0.22], [3, 0.08]]),
+      string: cyc(Array.from({ length: 20 }, (_, k) => [k + 1, 0.55 / (k + 1)])),
+      bass: cyc(Array.from({ length: 10 }, (_, k) => [k + 1, 0.7 / Math.pow(k + 1, 1.4)])),
+      kick: mk(3300, (i) => { const t = i / GBARATE; return 0.9 * Math.sin(2 * Math.PI * (45 * t + 75 * (1 - Math.exp(-t * 30)) / 30)) * Math.exp(-t * 14); }),
+      snare: mk(2400, (i) => { const t = i / GBARATE; return (0.6 * rnd() + 0.35 * Math.sin(2 * Math.PI * 185 * t)) * Math.exp(-t * 22); }),
+      hat: mk(700, (i) => { const x = rnd(), y = x - last; last = x; return 0.5 * y * Math.exp(-i / 140); }),
+      crash: mk(16000, (i) => { const x = rnd(), y = x - last; last = x; return 0.45 * y * Math.exp(-i / 5200); })
+    };
+    return gbaSamples;
+  }
+  function renderGBA(beat) {
+    const K = gbaKit(), dur = END * beat + 1.2, n = Math.ceil(dur * GBARATE);
+    const off = new OfflineAudioContext(4, n, GBARATE), merger = off.createChannelMerger(4);
+    merger.connect(off.destination);
+    const stemNames = ["lead", "harm", "bass", "drums"];
+    const stemIn = stemNames.map((_, ch) => {
+      const g = off.createGain(), wet = off.createGain(), dl = off.createDelay(0.2), fb = off.createGain();
+      dl.delayTime.value = 0.067; fb.gain.value = 0.34; wet.gain.value = 0.28;   // the engine's reverb
+      g.connect(merger, 0, ch); g.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(merger, 0, ch);
+      return g;
+    });
+    const inst = {
+      lead: { buf: K.flute, peak: 0.34, a: 0.03, sus: 0.85, rel: 0.09, layers: [0] },
+      harm: { buf: K.string, peak: 0.16, a: 0.05, sus: 0.9, rel: 0.12, layers: [-7, 7] },
+      bass: { buf: K.bass, peak: 0.4, a: 0.004, sus: 0.55, rel: 0.05, layers: [0] }
+    };
+    ["lead", "harm", "bass"].forEach((v, ch) => {
+      const I = inst[v], track = pitchTrack(v, beat, false);
+      for (const [a, e, m] of SCORE[v]) {
+        const ta = a * beat, te = e * beat;
+        for (const det of I.layers) {
+          const src = off.createBufferSource(), g = off.createGain();
+          src.buffer = I.buf; src.loop = true;
+          for (let t = ta; t < te; t += 1 / 60) {
+            const p = track(t + 1e-6); if (!p) break;
+            src.playbackRate.setValueAtTime(p.hz * Math.pow(2, det / 1200) / GBABASE, t);
+          }
+          const pk = I.peak / I.layers.length;
+          g.gain.setValueAtTime(0, ta); g.gain.linearRampToValueAtTime(pk, ta + I.a);
+          g.gain.setTargetAtTime(pk * I.sus, ta + I.a, 0.12);
+          if (e === END) g.gain.setTargetAtTime(0, ta + (te - ta) * 0.45, 0.3);
+          g.gain.setTargetAtTime(0, te, I.rel / 3);
+          src.connect(g); g.connect(stemIn[ch]); src.start(ta); src.stop(te + I.rel * 2);
+        }
+      }
+    });
+    DRUMS.forEach(([b, k, vol, r]) => {
+      const t = b * beat, src = off.createBufferSource(), g = off.createGain();
+      src.buffer = k === "roll" ? K.snare : K[k];
+      if (k === "roll") src.playbackRate.value = 1 + 0.05 * (r || 0);    // the roll tightens as it rises
+      g.gain.value = 0.55 * vol / 15;
+      src.connect(g); g.connect(stemIn[3]); src.start(t);
+    });
+    return off.startRendering().then(out => {
+      // the mixer's 8-bit output, then held (not smoothed) up to the playback rate
+      const sr = ctx.sampleRate, len = Math.ceil(dur * sr), stems = {};
+      stemNames.forEach((name, ch) => {
+        const src = out.getChannelData(ch), b = ctx.createBuffer(1, len, sr), d = b.getChannelData(0);
+        for (let i = 0; i < len; i++) {
+          const x = src[Math.min(n - 1, Math.floor(i * GBARATE / sr))];
+          d[i] = Math.round(Math.max(-1, Math.min(1, x)) * 127) / 127;
+        }
+        stems[name] = b;
+      });
+      return stems;
+    });
+  }
+  function rendered(beat) {
+    const key = [sys, beat, bassEnd, sys === "zx" ? JSON.stringify(muted) : ""].join("|");
+    if (!renderCache.has(key)) renderCache.set(key, sys === "zx" ? renderZX(beat) : renderGBA(beat));
+    return renderCache.get(key);
+  }
+    function play(machine) {
+      stop();
+      sys = machine; ensureAudio();
+      const bus = ctx.createGain(); bus.connect(master);
+      const gains = {};
+      for (const v of ["lead", "harm", "bass", "drums", "buzz"]) { gains[v] = ctx.createGain(); gains[v].connect(bus); }
+      run = { bus, gains, nodes: [], iters: [], timer: 0 };
+      const r = run, beat = 0.4;
+      const go = () => { const t0 = ctx.currentTime + 0.1; scheduleRound(t0, beat); return t0; };
+      if (SYS[sys].render) return rendered(beat).then(stems => { if (run !== r) return null; r.stems = stems; return go(); });
+      return Promise.resolve(go());
+    }
+    function stop() {
+      if (!run) return;
+      const r = run; run = null;
+      r.bus.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+      setTimeout(() => { r.nodes.forEach(n => { try { n.stop(); } catch (e) {} }); r.bus.disconnect(); }, 200);
+    }
+    return { play, stop, now: () => ctx ? ctx.currentTime : 0 };
+  })();
+
+  // ---------- Timeline (beats from the first note, 150 bpm, 60 frames a second) ----------
+  const FPS = 60, BEAT = 0.4, LAST = 6, END = 8.6, RUN_BEATS = END + 4;
+  const FRAMES = Math.round(RUN_BEATS * BEAT * FPS);
+  const FLICK = [4, 4.25, 4.5, 4.75, 5, 5.125, 5.25, 5.375];   // roll hits before the lambdas grow
+  const ROLL = [4, 4.25, 4.5, 4.75, 5, 5.125, 5.25, 5.375, 5.5, 5.625, 5.75, 5.875];
+  const GROW = 5.5;
+  const clamp01 = u => Math.max(0, Math.min(1, u));
+
+  // ---------- Machines: ring radius 64, or 48 on the 160 × 144 screens ----------
+  const PRESETS = {
+    nes:  { name: "NES", W: 256, H: 240, cx: 128, cy: 120, R: 64, big: true, model: "palette", twoBit: true, split: true,
+            budget: { tiles: 256, writes: 64, colors: 13 }, spr: { total: 64, line: 8 } },
+    sms:  { name: "Master System", W: 256, H: 192, cx: 128, cy: 96, R: 64, big: true, model: "palette", flips: true,
+            budget: { tiles: 448, writes: 96, colors: 31 }, spr: { total: 64, line: 8 } },
+    gg:   { name: "Game Gear", W: 160, H: 144, cx: 80, cy: 72, R: 48, big: false, model: "palette", flips: true,
+            budget: { tiles: 448, writes: 48, colors: 31 }, spr: { total: 64, line: 8 } },
+    gb:   { name: "Game Boy", W: 160, H: 144, cx: 80, cy: 72, R: 48, big: false, model: "swap",
+            budget: { tiles: 256, writes: 150, colors: 4 }, spr: { total: 40, line: 10 } },
+    gba:  { name: "GBA", W: 240, H: 160, cx: 120, cy: 80, R: 64, big: true, model: "palette", flips: true,
+            budget: { tiles: 1024, writes: 1024, colors: 255 }, spr: { total: 128, line: 32 } },
+    a800: { name: "Atari 800XL", W: 320, H: 192, cx: 160, cy: 96, R: 64, big: true, model: "rows",
+            budget: { tiles: 128, writes: 40, colors: 256, rowColors: 4 }, spr: { total: 8, line: 8, players: true } },
+    c64:  { name: "C64", W: 320, H: 200, cx: 160, cy: 100, R: 64, big: true, model: "cells",
+            budget: { tiles: 256, writes: 600, colors: 16, cellColors: 4 }, spr: { total: 8, line: 8, multiplex: true } },
+    zx:   { name: "ZX Spectrum", W: 256, H: 192, cx: 128, cy: 96, R: 64, big: true, model: "cells",
+            budget: { tiles: null, writes: 768, colors: 15, cellColors: 2 }, spr: null }
+  };
+  const AUDIO_SYS = { nes: "nes", sms: "sms", gg: "sms", gb: "gb", gba: "gba", a800: "a800", c64: "c64", zx: "zx" };
+
+  // ---------- Letters: tile-aligned, chamfered strokes with an inlaid groove ----------
+  // Large letters are 2 × 4 tiles, small ones 1 × 3. The O is an octagon broken at its corners, eight
+  // segments like the ring; the A is a capital lambda with a fabric node where its crossbar would be.
+  const LETTERS = {
+    big: { w: 16, h: 32, r: 2.1, groove: 0.55, gap: 1.3, glyphs: {
+      R: { lines: [[[2.5, 29.5], [2.5, 2.5], [10.5, 2.5], [13.5, 5.5], [13.5, 12.5], [10.5, 15.5], [2.5, 15.5]], [[7.5, 15.5], [13.5, 21.5], [13.5, 29.5]]] },
+      O: { octagon: [[5.5, 2.5], [10.5, 2.5], [13.5, 5.5], [13.5, 26.5], [10.5, 29.5], [5.5, 29.5], [2.5, 26.5], [2.5, 5.5]] },
+      T: { lines: [[[2.5, 2.5], [13.5, 2.5]], [[7.5, 2.5], [7.5, 29.5]]] },
+      A: { lines: [[[2.5, 29.5], [2.5, 8.5], [8, 3]], [[13.5, 29.5], [13.5, 8.5], [8, 3]]], node: [6, 17, 4, 4] } } },
+    small: { w: 8, h: 24, r: 1.1, groove: 0, gap: 0, glyphs: {
+      R: { lines: [[[1.5, 22.5], [1.5, 1.5], [4.5, 1.5], [6.5, 3.5], [6.5, 8.5], [4.5, 10.5], [1.5, 10.5]], [[3.5, 10.5], [6.5, 13.5], [6.5, 22.5]]] },
+      O: { lines: [[[3.5, 1.5], [4.5, 1.5], [6.5, 3.5], [6.5, 20.5], [4.5, 22.5], [3.5, 22.5], [1.5, 20.5], [1.5, 3.5], [3.5, 1.5]]] },
+      T: { lines: [[[1.5, 1.5], [6.5, 1.5]], [[3.5, 1.5], [3.5, 22.5]]] },
+      A: { lines: [[[1.5, 22.5], [1.5, 4.5], [4, 2]], [[6.5, 22.5], [6.5, 4.5], [4, 2]]], node: [3, 13, 2, 2] } } }
+  };
+  const dseg = (px, py, ax, ay, bx, by) => {
+    const vx = bx - ax, vy = by - ay, t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy || 1)));
+    return Math.hypot(px - ax - t * vx, py - ay - t * vy);
+  };
+  function glyphMask(spec, g) {
+    const { w, h, r, groove, gap } = spec, m = new Uint8Array(w * h);
+    let segs = [];
+    if (g.lines) for (const pl of g.lines) for (let i = 0; i + 1 < pl.length; i++) segs.push([...pl[i], ...pl[i + 1]]);
+    if (g.octagon) {   // eight edges, each shortened at both ends so the corners open
+      const v = g.octagon;
+      for (let i = 0; i < 8; i++) {
+        const [ax, ay] = v[i], [bx, by] = v[(i + 1) % 8], L = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / L, uy = (by - ay) / L;
+        segs.push([ax + ux * gap, ay + uy * gap, bx - ux * gap, by - uy * gap]);
+      }
+    }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let d = 1e9; for (const s of segs) d = Math.min(d, dseg(x + 0.5, y + 0.5, ...s));
+      if (d <= r && !(groove && d < groove)) m[y * w + x] = 1;
+    }
+    if (g.node) { const [nx, ny, nw, nh] = g.node; for (let y = ny; y < ny + nh; y++) for (let x = nx; x < nx + nw; x++) m[y * w + x] = 1; }
+    return m;
+  }
+
+  // ---------- Colour indices ----------
+  // 0 background; 1..5 ring stages (stage s holds segments s and 8 - s, which share a parity); 6 lambdas;
+  // 7 core; 8 letters; 10, 11 the fabric's teal and violet; 27, 28 junction lights;
+  // 30..35 the sparks (head, trail) for lead, harmony and bass, on the sprite layer.
+  const IDX = { emb: 6, core: 7, letters: 8, teal: 10, violet: 11, lightB: 27, lightD: 28 };
+  const SPARK = { lead: [30, 31], harm: [32, 33], bass: [34, 35] }, SPARK_CORE = 36;
+  const C = { ink: "#14111C", shadow: "#453A62", teal: "#22A699", head: "#F4ECD8", amber: "#F7A41D", paper: "#F4ECD8", dim: "#2A2340" };
+  const mix = (a, b, t) => {
+    const x = parseInt(a.slice(1), 16), y = parseInt(b.slice(1), 16), m = s => Math.round(((x >> s) & 255) * (1 - t) + ((y >> s) & 255) * t);
+    return "#" + [m(16), m(8), m(0)].map(v => v.toString(16).padStart(2, "0")).join("");
+  };
+
+  // ---------- State ----------
+  let P = PRESETS.nes, c0 = "none", geo = null, stats = null, frame = 0, playing = false, t0 = 0;
+  P.id = "nes";
+  const lightsOn = () => document.getElementById("lights").checked;
+  const c0eff = () => (c0 === "raster" && (P.id === "nes" || P.id === "zx")) ? "backdrop" : c0;
+
+  // ---------- Geometry, once per machine ----------
+  function buildGeometry() {
+    const { W, H, cx, cy, R } = P, k = R / 15.6;
+    const ring = new Uint8Array(W * H), emb = new Uint8Array(W * H), core = new Uint8Array(W * H), let_ = new Uint8Array(W * H);
+    const embCell = new Float32Array(W * H);
+    const apex = 3.6 * k, reach = 10.6 * k, spread = 4.39 * k, half = 0.95 * k;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x, dx = x + 0.5 - cx, dy = y + 0.5 - cy, r = Math.hypot(dx, dy);
+      if (r >= 12.2 * k && r <= 15.6 * k) {
+        const a = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360, a2 = (a + 22.5) % 45;
+        if (a2 > 4 && a2 < 41) { const seg = Math.floor(((a + 22.5) % 360) / 45); ring[i] = 1 + Math.min(seg, 8 - seg); }
+      }
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < k) core[i] = 1;
+      else for (let q = 0; q < 4; q++) {
+        const ang = q * Math.PI / 2, ca = Math.cos(ang), sa = Math.sin(ang);
+        const rx = dx * ca + dy * sa, ry = -dx * sa + dy * ca;
+        if (dseg(rx, ry, 0, -apex, -spread, -reach) < half || dseg(rx, ry, 0, -apex, spread, -reach) < half) { emb[i] = 1; break; }
+      }
+      embCell[i] = Math.hypot((x >> 3) * 8 + 4 - cx, (y >> 3) * 8 + 4 - cy);
+    }
+    let embMax = 0; for (let i = 0; i < W * H; i++) if (emb[i]) embMax = Math.max(embMax, embCell[i]);
+    // letters on tile boundaries: one tile from the ring, one tile apart
+    const spec = LETTERS[P.big ? "big" : "small"], lw = spec.w, lh = spec.h;
+    const ringL = Math.floor((cx - R) / 8) * 8, ringR = Math.ceil((cx + R) / 8) * 8, ly = Math.round((cy - lh / 2) / 8) * 8;
+    const place = [["R", ringL - 8 - lw - 8 - lw], ["O", ringL - 8 - lw], ["T", ringR + 8], ["A", ringR + 8 + lw + 8]];
+    for (const [ch, x0] of place) {
+      const m = glyphMask(spec, spec.glyphs[ch]);
+      for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) if (m[y * lw + x] && x0 + x >= 0 && x0 + x < W) let_[(ly + y) * W + x0 + x] = 1;
+    }
+    const logo = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) logo[i] = ring[i] || emb[i] || core[i] || let_[i] ? 1 : 0;
+    // fabric: trace rows and columns every fourth tile, mirrored about the logo's centre, so the grid (and
+    // everything that rides it) is symmetric; where the centre falls on a tile edge, two traces run side by side
+    const baseX = cx % 8 === 0 ? 4 : 0, baseY = cy % 8 === 0 ? 4 : 0;
+    const traceOff = (o, base) => Math.abs(o) >= base && (Math.abs(o) - base) % 32 === 0;
+    const rowsY = [], colsX = [];
+    for (let ty = 0; ty < H; ty += 8) if (traceOff(ty + 4 - cy, baseY)) rowsY.push(ty + 4);
+    for (let tx = 0; tx < W; tx += 8) if (traceOff(tx + 4 - cx, baseX)) colsX.push(tx + 4);
+    // the sparks' square: the first trace rows and columns clear of the ring, all around it
+    const first = base => { let o = base; while (o < R + 2) o += 32; return o; };
+    const ox = first(baseX), oy = first(baseY);
+    const sq = { x0: cx - ox, x1: cx + ox, y0: Math.max(4, cy - oy), y1: Math.min(H - 4, cy + oy), inner: baseX };
+    geo = { ring, emb, core, let_, logo, embCell, embMax, R, colsX, rowsY, sq, baseX, baseY };
+  }
+
+  // ---------- The fabric: 8 phase versions per trace tile, moved by redrawing the versions that change ----------
+  // 16 phase versions per trace tile; the phase is the tile's distance from the centre (|dx| + |dy|), so the
+  // fronts are diamonds spreading outward, diagonal lines mirrored in each quarter, one in sixteen tiles lit
+  const WEAVE_L = 16;
+  const traceOff = (o, base) => Math.abs(o) >= base && (Math.abs(o) - base) % 32 === 0;
+  const traceH = ty => traceOff(ty + 4 - P.cy, geo.baseY), traceV = tx => traceOff(tx + 4 - P.cx, geo.baseX);
+  const isTraceCell = (tx, ty) => traceH(ty) || traceV(tx);
+  // A tile's phase: its distance from the centre (|dx| + |dy|, so fronts spread outward as diagonals), shifted
+  // by its trace line's own offset, so neighbouring lines pulse out of step rather than in neat diamonds.
+  // The offset depends on the line's distance from the centre, so the fabric stays mirror-symmetric.
+  const weavePhase = (tx, ty) => {
+    const dx = tx + 4 - P.cx, dy = ty + 4 - P.cy, line = traceH(ty) ? Math.round(Math.abs(dy) / 32) : Math.round(Math.abs(dx) / 32) + 3;
+    return (Math.floor((Math.abs(dx) + Math.abs(dy)) / 8) + line * 5) % WEAVE_L;
+  };
+  const weaveStep = f => Math.floor(f / 4) + (f / FPS / BEAT >= LAST ? Math.min(8, Math.floor((f / FPS / BEAT - LAST) / 0.06)) : 0);
+  const weaveLevel = (ph, f) => (((ph - weaveStep(f)) % WEAVE_L) + WEAVE_L) % WEAVE_L;
+  function weaveTile(buf, tx, ty, lv) {   // lv 0: a thin solid pulse, 1: its tail, 2+: the dotted trace
+    const { W } = P, hz = traceH(ty), vt = traceV(tx);
+    const one = P.id === "zx" || P.model === "rows", bright = IDX.teal, dim = one ? IDX.teal : IDX.violet;
+    for (let ly = 0; ly < 8; ly++) for (let lx = 0; lx < 8; lx++) {
+      const onH = hz && (lv <= 1 ? ly === 3 || (lv === 0 && ly === 4) : ly === 3 && lx % 2 === 0);
+      const onV = vt && (lv <= 1 ? lx === 3 || (lv === 0 && lx === 4) : lx === 3 && ly % 2 === 0);
+      const node = hz && vt && lx >= 2 && lx <= 4 && ly >= 2 && ly <= 4;
+      if (onH || onV || node) buf[(ty + ly) * W + tx + lx] = lv === 0 ? bright : dim;
+    }
+  }
+
+  // ---------- One frame of background ----------
+  function compose(f, forCost) {
+    const { W, H } = P, buf = new Uint8Array(W * H), b = f / FPS / BEAT, g = geo;
+    const embR = b < GROW ? -1 : b >= LAST ? 1e9 : (1 - Math.pow(1 - (b - GROW) / (LAST - GROW), 2)) * g.embMax;
+    for (let i = 0; i < W * H; i++) {
+      if (g.let_[i]) buf[i] = IDX.letters;
+      if (g.ring[i]) buf[i] = g.ring[i];
+      if (g.emb[i] && g.embCell[i] <= embR) buf[i] = IDX.emb;
+      if (g.core[i]) buf[i] = IDX.core;
+    }
+    for (let ty = 0; ty < H; ty += 8) for (let tx = 0; tx < W; tx += 8) {
+      if (!isTraceCell(tx, ty)) continue;
+      let empty = true;
+      for (let y = ty; y < ty + 8 && empty; y++) for (let x = tx; x < tx + 8; x++) if (g.logo[y * W + x]) { empty = false; break; }
+      if (!empty) continue;
+      const ph = weavePhase(tx, ty);
+      weaveTile(buf, tx, ty, forCost ? ph : weaveLevel(ph, f));   // for counting, a tile keeps its phase version
+    }
+    return buf;
+  }
+
+  // ---------- Sparks: one per voice, each on its own path, entering a beat apart ----------
+  // The lead takes the top of the square around the ring and turns down its right side; the harmony comes in
+  // along the bottom from the right and turns up the left side; each inversion runs its path backwards. The bass
+  // rises up the centre bus (the pair of traces through the middle) toward the ring, and its figure-again rides
+  // the bus all the way into the core on the crash. While the board waits, the three circle the square
+  // clockwise, a third of the way apart, like tokens in a ring counter.
+  const STATEMENTS = {
+    lead: [[0, 1.5, "lead"], [3, 4.5, "lead-back"]],
+    harm: [[1, 2.5, "harm"], [4, 5.5, "harm-back"]],
+    bass: [[2, 3.5, "bass"], [5, 6, "bass-core"]]
+  };
+  function polyAt(pts, u) {
+    let L = 0; const seg = [];
+    for (let i = 0; i + 1 < pts.length; i++) { const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); seg.push(l); L += l; }
+    let d = clamp01(u) * L;
+    for (let i = 0; i < seg.length; i++) {
+      if (d <= seg[i] || i === seg.length - 1) { const t = seg[i] ? Math.min(1, d / seg[i]) : 0; return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t]; }
+      d -= seg[i];
+    }
+  }
+  function path(kind) {
+    const { W, H, cx, cy } = P, q = geo.sq, R = geo.R;
+    const lead = [[-10, q.y0], [q.x1, q.y0], [q.x1, cy]], harm = [[W + 10, q.y1], [q.x0, q.y1], [q.x0, cy]];
+    switch (kind) {
+      case "lead": return lead;
+      case "lead-back": return [...lead].reverse();
+      case "harm": return harm;
+      case "harm-back": return [...harm].reverse();
+      case "bass": return [[cx, H + 10], [cx, cy + R + 6]];
+      case "bass-core": return [[cx, H + 10], [cx, cy]];
+    }
+  }
+  function sparksAt(b) {   // [[x, y, voice], ...], in a fixed order so trails can follow
+    const { cx } = P, q = geo.sq, out = [];
+    for (const [v, list] of Object.entries(STATEMENTS)) for (const [b0, b1, kind] of list)
+      if (b >= b0 && b < b1) { const [x, y] = polyAt(path(kind), (b - b0) / (b1 - b0)); out.push([x, y, v]); }
+    if (b >= END) {
+      const loop = [[cx, q.y0], [q.x1, q.y0], [q.x1, q.y1], [q.x0, q.y1], [q.x0, q.y0], [cx, q.y0]];
+      ["lead", "harm", "bass"].forEach((v, i) => { const [x, y] = polyAt(loop, ((b - END) / 4 + i / 3) % 1); out.push([x, y, v]); });
+    }
+    return out;
+  }
+  // a spark is two 8 × 8 sprites: a diamond head with a white centre, and a trail of two smaller diamonds
+  // in the eight pixels behind it
+  function sparkPixels(b) {
+    const out = [], heads = sparksAt(b);
+    heads.forEach(([hx, hy, v], n) => {
+      const [hi, ti] = SPARK[v], xr = Math.round(hx), yr = Math.round(hy);
+      const want = [[5, 2], [9, 1]];
+      let w = 0;
+      for (let j = 1; j <= 30 && w < want.length; j++) {
+        const p = sparksAt(b - j * 0.008).find(q => q[2] === v);
+        if (!p) break;
+        const d = Math.abs(p[0] - hx) + Math.abs(p[1] - hy);
+        if (d < want[w][0]) continue;
+        const r = want[w][1], px = Math.round(p[0]), py = Math.round(p[1]);
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (Math.abs(dx) + Math.abs(dy) <= r) out.push([px + dx, py + dy, ti, v, n, "t"]);
+        w++;
+      }
+      for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+        const m = Math.abs(dx) + Math.abs(dy); if (m > 3) continue;
+        out.push([xr + dx, yr + dy, m <= 1 ? SPARK_CORE : hi, v, n, "h"]);
+      }
+    });
+    return out;
+  }
+  // junction lights: sprites twinkling on the fabric's crossings, a few at a time
+  function lightPixels(b, buf) {
+    const out = [];
+    if (!lightsOn() || b < 0) return out;
+    const hits = ROLL.filter(h => h <= b).length;
+    const step = b >= END ? Math.floor((b - END) * 2) + 40 : Math.floor(b * 3) + hits + (b >= LAST ? Math.min(10, Math.floor((b - LAST) / 0.06)) : 0);
+    const q = geo.sq;
+    geo.rowsY.forEach((y, r) => {
+      if (y === q.y0 || y === q.y1) return;   // keep the sparks' main rows free of other sprites
+      geo.colsX.forEach((x, c) => {
+        if (buf[y * P.W + x] === 0 || geo.logo[y * P.W + x]) return;   // only where a trace crossing is drawn
+        const mirror = Math.abs(x - P.cx), lv = ((((Math.round(mirror / 32) + r * 3) - step) % 10) + 10) % 10;   // mirrored left and right
+        if (lv === 0) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) out.push([x + dx, y + dy, Math.abs(dx) + Math.abs(dy) === 2 ? IDX.lightD : IDX.lightB, "light", `${x},${y}`, "h"]);
+      });
+    });
+    return out;
+  }
+
+  // ---------- The palette for a frame ----------
+  function pulseEnv(b) {
+    if (b < 0) return 0;
+    let e = 0;
+    for (const bt of [0, 1, 2, 3]) if (b >= bt) e = Math.max(e, 0.5 * Math.exp(-(b - bt) / 0.18));
+    ROLL.forEach((h, i) => { if (b >= h) e = Math.max(e, (0.25 + 0.6 * i / (ROLL.length - 1)) * Math.exp(-(b - h) / 0.07)); });
+    if (b >= LAST) e = Math.max(e, Math.exp(-(b - LAST) / 0.45));
+    if (b >= END) e = Math.max(e, 0.14 + 0.1 * Math.sin((b - END) * Math.PI));
+    return e;
+  }
+  // Each machine's own colours for each role, from its real palette where it has a fixed one.
+  const LOOK = {
+    base: { bg: "#14111C", off: "#453A62", on: "#22A699", head: "#F4ECD8", mid: "#7FD3C9", emb: "#F7A41D", core: "#F4ECD8",
+            letDim: "#2A2340", let: "#F4ECD8", fabOn: "#1E6E68", fabDim: "#2C2546", lightB: "#BFF5EE", lightD: "#3C8F87", pulse: "#30284C",
+            spark: { lead: ["#FFE29A", "#C98A1E"], harm: ["#B4F7EF", "#1FA597"], bass: ["#DCD0FF", "#7A68C8"] }, sparkCore: "#FFFFFF" },
+    nes: { bg: "#000000", off: "#3C1E80", on: "#00A0A8", head: "#FCFCFC", mid: "#78DCE8", emb: "#FCA044", core: "#FCFCFC",   // close to the 2C02's palette
+           letDim: "#24188C", let: "#FCFCFC", fabOn: "#00788A", fabDim: "#24188C", lightB: "#A4E4FC", lightD: "#0088B8", pulse: "#24188C",
+           spark: { lead: ["#FCE0A8", "#E45C10"], harm: ["#B8F8F8", "#00A8A8"], bass: ["#D8B8F8", "#6844FC"] }, sparkCore: "#FCFCFC", steps: ["#000000", "#24188C"] },
+    gb:  { bg: "#14111C", off: "#14111C", on: "#22A699", head: "#F4ECD8", mid: "#22A699", emb: "#F7A41D", core: "#F4ECD8",   // four shades
+           letDim: "#14111C", let: "#F4ECD8", fabOn: "#F7A41D", fabDim: "#22A699", lightB: "#F4ECD8", lightD: "#22A699", pulse: "#22A699",
+           spark: { lead: ["#F4ECD8", "#F7A41D"], harm: ["#F4ECD8", "#22A699"], bass: ["#F4ECD8", "#F7A41D"] }, sparkCore: "#F4ECD8", steps: ["#14111C", "#22A699"] },
+    sms: { bg: "#000000", off: "#000055", on: "#00AAAA", head: "#FFFFAA", mid: "#55AAAA", emb: "#FFAA00", core: "#FFFFAA",   // 2 bits a channel
+           letDim: "#000055", let: "#FFFFAA", fabOn: "#005555", fabDim: "#000055", lightB: "#AAFFFF", lightD: "#00AAAA", pulse: "#000055",
+           spark: { lead: ["#FFFF55", "#AA5500"], harm: ["#AAFFFF", "#00AAAA"], bass: ["#FFAAFF", "#5555AA"] }, sparkCore: "#FFFFFF", steps: ["#000000", "#000055"] },
+    c64: { bg: "#352879", off: "#6C5EB5", on: "#70A4B2", head: "#FFFFFF", mid: "#959595", emb: "#B8C76F", core: "#FFFFFF",   // the VIC-II's 16
+           letDim: "#433A8F", let: "#FFFFFF", fabOn: "#6C5EB5", fabDim: "#000000", lightB: "#FFFFFF", lightD: "#70A4B2", pulse: "#6C5EB5",
+           spark: { lead: ["#B8C76F", "#6F4F25"], harm: ["#9AD284", "#588D43"], bass: ["#9A6759", "#6F3D86"] }, sparkCore: "#FFFFFF", steps: ["#352879", "#6C5EB5"] },
+    a800: { bg: "#0E0B14", off: "#3B2E5A", on: "#2CB5A8", head: "#E8F8F0", mid: "#7FD8CC", emb: "#F2A23A", core: "#E8F8F0",
+           letDim: "#2A2340", let: "#F2A23A", fabOn: "#1E6E68", fabDim: "#2A2340", lightB: "#C8F8F0", lightD: "#2CB5A8", pulse: "#2E2850",
+           spark: { lead: ["#FFE0A0", "#C78A2C"], harm: ["#B8F8F0", "#22A699"], bass: ["#D8C8FF", "#7A68B8"] }, sparkCore: "#FFFFFF", gradient: true },
+    zx:  { bg: "#000000", off: "#0000D7", on: "#00D7D7", head: "#FFFFFF", mid: "#00FFFF", emb: "#FFFF00", core: "#FFFFFF",   // 15 colours, clash
+           letDim: "#0000D7", let: "#D7D7D7", fabOn: "#0000D7", fabDim: "#0000D7", lightB: "#FFFFFF", lightD: "#00D7D7", pulse: "#0000D7",
+           spark: { lead: ["#FFFF00", "#D7D700"], harm: ["#00FFFF", "#00D7D7"], bass: ["#FF00FF", "#D700D7"] }, sparkCore: "#FFFFFF", steps: ["#000000", "#0000D7"], clash: true }
+  };
+  const look = () => LOOK[P.id] || LOOK.base;
+  const qbits = (hex, bits) => {   // round each channel to the machine's bits (Game Gear 4, GBA 5)
+    const n = parseInt(hex.slice(1), 16), lv = (1 << bits) - 1, f = c => Math.round(Math.round(c / 255 * lv) * 255 / lv);
+    return "#" + [f(n >> 16), f((n >> 8) & 255), f(n & 255)].map(v => v.toString(16).padStart(2, "0")).join("");
+  };
+  const qmachine = hex => P.id === "gg" ? qbits(hex, 4) : P.id === "gba" ? qbits(hex, 5) : hex;
+  function palette(f) {
+    const b = f / FPS / BEAT, p = new Array(37).fill(C.ink);
+    for (let s = 0; s < 5; s++) {
+      const L = look();
+      let c = b >= s ? L.on : L.off;
+      if (b >= 4 && b < GROW) {   // the alternating flicker: one parity dips per roll hit
+        let h = -1; for (let j = 0; j < FLICK.length && FLICK[j] <= b; j++) h = j;
+        if (h >= 0) { const len = (FLICK[h + 1] ?? GROW) - FLICK[h]; if (s % 2 === h % 2 && b - FLICK[h] < len * 0.6) c = L.off; }
+      }
+      if (b >= LAST && b < LAST + 0.5) c = Math.floor((b - LAST) / 0.125) % 2 === 0 ? L.head : L.bg;   // two flickers on the crash
+      if (b >= END) { const w = Math.floor((b - END) * 2) % 6; c = s === w ? L.head : s === w - 1 ? L.mid : L.on; }
+      p[1 + s] = c;
+    }
+    const L = look();
+    p[0] = L.bg;
+    p[IDX.emb] = L.emb; p[IDX.core] = b >= LAST && b < LAST + 0.25 ? L.sparkCore : L.core;
+    p[IDX.letters] = b >= LAST + 0.4 ? L.let : L.letDim;
+    p[IDX.teal] = L.fabOn; p[IDX.violet] = L.fabDim;
+    p[IDX.lightB] = L.lightB; p[IDX.lightD] = L.lightD;
+    p[30] = L.spark.lead[0]; p[31] = L.spark.lead[1]; p[32] = L.spark.harm[0]; p[33] = L.spark.harm[1]; p[34] = L.spark.bass[0]; p[35] = L.spark.bass[1];
+    p[SPARK_CORE] = L.sparkCore;
+    if (c0eff() === "backdrop" && P.id !== "zx") {
+      // smooth where the machine has colours to spare, in steps where its palette is fixed or small
+      const e = pulseEnv(b);
+      p[0] = L.steps ? (e > 0.45 ? L.steps[1] : L.steps[0]) : mix(L.bg, L.pulse, e);
+    }
+    return p.map((c, i) => qmachine(c));
+  }
+
+  // ---------- Tiles ----------
+  function tileKeys(buf) {
+    const { W, H } = P, keys = [];
+    for (let ty = 0; ty < H; ty += 8) for (let tx = 0; tx < W; tx += 8) {
+      let s = "";
+      for (let y = ty; y < ty + 8; y++) for (let x = tx; x < tx + 8; x++) s += String.fromCharCode(65 + buf[y * W + x]);
+      keys.push(s);
+    }
+    return keys;
+  }
+  const flipH = k => { let o = ""; for (let r = 0; r < 8; r++) o += [...k.slice(r * 8, r * 8 + 8)].reverse().join(""); return o; };
+  const flipV = k => { let o = ""; for (let r = 7; r >= 0; r--) o += k.slice(r * 8, r * 8 + 8); return o; };
+  const relabel = k => { const map = { A: "A" }; let next = 66, o = ""; for (const ch of k) { if (!(ch in map)) map[ch] = String.fromCharCode(next++); o += map[ch]; } return o; };
+  const canonCache = new Map();
+  const canon = k => {
+    let c = canonCache.get(k); if (c !== undefined) return c;
+    let x = P.twoBit ? relabel(k) : k;
+    if (P.flips) x = [x, flipH(x), flipV(x), flipH(flipV(x))].sort()[0];
+    canonCache.set(k, x); return x;
+  };
+
+  // ---------- Run the whole animation once and count ----------
+  function simulate() {
+    const { W, H } = P, cols = W / 8, splitRow = Math.round(P.cy / 8);
+    const unique = new Set(), uTop = new Set(), uBot = new Set(), writes = [], pals = [];
+    let prevKeys = null, prevPal = null, prevCell = null, prevSpark = null, setup = 0;
+    let attrMax = 0, cellMax = 0, rowMax = 0, cellOver = 0, sprMax = 0, sprLine = 0, colors = new Set();
+    for (let f = 0; f < FRAMES; f++) {
+      const b = f / FPS / BEAT, buf = compose(f, true), pal = palette(f), keys = tileKeys(buf);
+      keys.forEach((k, i) => { const c = canon(k); unique.add(c); if (P.split) (Math.floor(i / cols) < splitRow ? uTop : uBot).add(c); });
+      for (let i = 0; i < buf.length; i++) colors.add(buf[i]);
+      let w = 0, pw = 0, cw = 0;
+      if (prevKeys) {
+        for (let i = 0; i < keys.length; i++) if (keys[i] !== prevKeys[i]) w++;
+        for (let i = 0; i < 30; i++) if (pal[i] !== prevPal[i]) pw++;
+      } else setup = keys.filter(k => k !== "A".repeat(64)).length;
+      // per-cell colour (C64, Spectrum) and the Game Boy's swaps: a colour change rewrites each cell it touches
+      if (P.model === "cells" || P.model === "swap") {
+        const cellCol = keys.map(k => { let o = ""; for (const ch of new Set(k)) if (ch !== "A") o += pal[ch.charCodeAt(0) - 65] + ","; return o; });
+        if (prevCell) for (let i = 0; i < cellCol.length; i++) if (cellCol[i] !== prevCell[i] && keys[i] === prevKeys[i]) cw++;
+        prevCell = cellCol;
+        if (P.model === "cells") { let o = 0; for (const k of keys) if (new Set(k).size > P.budget.cellColors) o++; cellOver = Math.max(cellOver, o); }
+      }
+      // sprites: the sparks and lights; on the Spectrum the sparks recolour cells instead
+      const sp = sparkPixels(b).concat(lightPixels(b, compose(f, false)));
+      if (P.spr) {
+        // each spark head, each trail and each light is one 8 × 8 sprite placed where it is needed
+        const groups = new Map(), perLine = new Array(H).fill(0);
+        for (const [x, y, , v, n, part] of sp) {
+          if (x < 0 || x >= W || y < 0 || y >= H) continue;
+          const key = `${v}|${n}|${part}`, g = groups.get(key) || { y0: y, y1: y };
+          g.y0 = Math.min(g.y0, y); g.y1 = Math.max(g.y1, y); groups.set(key, g);
+        }
+        for (const g of groups.values()) for (let y = g.y0; y <= Math.min(H - 1, g.y0 + 7); y++) perLine[y]++;
+        sprMax = Math.max(sprMax, groups.size); sprLine = Math.max(sprLine, ...perLine);
+      } else {
+        const cells = new Set(sp.filter(([x, y]) => x >= 0 && x < W && y >= 0 && y < H).map(([x, y]) => (y >> 3) * cols + (x >> 3)));
+        if (prevSpark) { for (const c of cells) if (!prevSpark.has(c)) cw++; for (const c of prevSpark) if (!cells.has(c)) cw++; }
+        prevSpark = cells;
+      }
+      if (P.model === "swap") w += cw; else cellMax = Math.max(cellMax, cw);
+      if (P.model === "rows") for (let r = 0; r < keys.length / cols; r++) {
+        const set = new Set(); for (let c = 0; c < cols; c++) for (const ch of keys[r * cols + c]) if (ch !== "A") set.add(ch);
+        rowMax = Math.max(rowMax, set.size);
+      }
+      if (P.twoBit) {
+        let n = 0;
+        for (let ay = 0; ay < H; ay += 16) for (let ax = 0; ax < W; ax += 16) {
+          const set = new Set(); for (let y = ay; y < Math.min(H, ay + 16); y++) for (let x = ax; x < ax + 16; x++) { const c = buf[y * W + x]; if (c) set.add(c); }
+          if (set.size > 3) n++;
+        }
+        attrMax = Math.max(attrMax, n);
+      }
+      writes.push(w); pals.push(pw);
+      prevKeys = keys; prevPal = pal;
+    }
+    // the fabric's cost per step
+    const bitmap = P.model === "cells" || P.model === "rows";
+    const b0 = compose(0, true), cells = [];
+    for (let ty = 0; ty < H; ty += 8) for (let tx = 0; tx < W; tx += 8) {
+      if (!isTraceCell(tx, ty)) continue;
+      let any = false; for (let y = ty; y < ty + 8 && !any; y++) for (let x = tx; x < tx + 8; x++) if (b0[y * W + x] === IDX.teal || b0[y * W + x] === IDX.violet) { any = true; break; }
+      if (any) cells.push(weavePhase(tx, ty));
+    }
+    let weaveCells = 0;
+    for (let f = 1; f < FRAMES; f++) {
+      if (weaveStep(f) === weaveStep(f - 1)) continue;
+      let n = 0; for (const ph of cells) if (Math.min(2, weaveLevel(ph, f - 1)) !== Math.min(2, weaveLevel(ph, f))) n++;
+      weaveCells = Math.max(weaveCells, n);
+    }
+    const bytesPerTile = P.twoBit || P.id === "gb" ? 16 : 32;
+    let maxW = 0, maxAt = 0; writes.forEach((x, f) => { if (x > maxW) { maxW = x; maxAt = f; } });
+    stats = { unique: unique.size, split: P.split ? [uTop.size, uBot.size] : null, writes, pals, maxW, maxAt, maxP: Math.max(...pals), setup,
+      colors: colors.size, attrMax, cellMax, rowMax, cellOver, sprMax, sprLine,
+      weave: bitmap ? { kind: "bitmap", n: weaveCells, bytes: weaveCells * 8 } : { kind: "tiles", n: 9, bytes: 9 * bytesPerTile } };
+    renderStats(); drawChart();
+  }
+
+  // ---------- Drawing ----------
+  const scr = document.getElementById("scr"), sg = scr.getContext("2d");
+  const off = document.createElement("canvas"), og = off.getContext("2d");
+  const hexRGB = h => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+  function setScale() { const z = P.W <= 160 ? 4 : 3; off.width = P.W; off.height = P.H; scr.width = P.W * z; scr.height = P.H * z; scr.dataset.z = z; }
+  function draw() {
+    const { W, H } = P, b = frame / FPS / BEAT, buf = compose(frame, false), palHex = palette(frame), pal = palHex.map(hexRGB);
+    // the sprite layer: sparks and lights, drawn behind the logo where they cross it
+    for (const [x, y, idx] of sparkPixels(b).concat(lightPixels(b, buf))) if (x >= 0 && x < W && y >= 0 && y < H && !geo.logo[y * W + x]) buf[y * W + x] = idx;
+    if (look().clash) {   // the Spectrum: each 8 × 8 cell shows one ink, the one most of its lit pixels want
+      for (let ty = 0; ty < H; ty += 8) for (let tx = 0; tx < W; tx += 8) {
+        const n = new Map();
+        for (let y = ty; y < ty + 8; y++) for (let x = tx; x < tx + 8; x++) { const c = buf[y * W + x]; if (c) n.set(c, (n.get(c) || 0) + 1); }
+        if (n.size < 2) continue;
+        let best = 0, bn = 0; for (const [c, k] of n) if (k > bn) { best = c; bn = k; }
+        for (let y = ty; y < ty + 8; y++) for (let x = tx; x < tx + 8; x++) if (buf[y * W + x]) buf[y * W + x] = best;
+      }
+    }
+    let rowBg = null;
+    if (c0eff() === "raster") {   // a bar of background colour sweeps down after each beat
+      const env = pulseEnv(b), ph = b < 0 ? -1 : b >= END ? ((b - END) / 2) % 1 : (b % 1) / 0.7;
+      rowBg = [];
+      for (let y = 0; y < H; y++) {
+        const bar = Math.max(0, 1 - Math.abs(y - ph * H) / 14);
+        const crash = b >= LAST && b < END ? Math.exp(-(b - LAST) / 0.45) * (0.5 + 0.5 * Math.cos(y / 6)) : 0;
+        rowBg.push(hexRGB(mix(C.ink, (Math.floor(y / 2) % 2) ? "#2A6A64" : "#2F4F6A", Math.min(1, Math.max(bar * (b >= END ? 0.35 : 0.4 + env), crash)))));
+      }
+    }
+    const bcol = (c0eff() === "backdrop" && P.id === "zx") ? (pulseEnv(b) > 0.45 ? "#0000D7" : "#000000") : "";
+    if (scr.parentElement.style.background !== bcol) scr.parentElement.style.background = bcol;
+    const img = og.createImageData(W, H);
+    for (let i = 0; i < buf.length; i++) {
+      let c = (rowBg && buf[i] === 0) ? rowBg[Math.floor(i / W)] : pal[buf[i]];
+      if (look().gradient && buf[i] === IDX.letters && b >= LAST + 0.4) {   // the 800XL: letter colour changed every scanline
+        const y = Math.floor(i / W), u = 0.5 + 0.5 * Math.sin(y * 0.33 - b * 4);
+        c = hexRGB(mix("#F2A23A", "#2CB5A8", Math.round(u * 6) / 6));
+      }
+      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
+    }
+    og.putImageData(img, 0, 0);
+    sg.imageSmoothingEnabled = false;
+    sg.drawImage(off, 0, 0, scr.width, scr.height);
+    if (document.getElementById("grid").checked) {
+      const z = Number(scr.dataset.z);
+      sg.strokeStyle = "rgba(244,236,216,0.10)"; sg.lineWidth = 1; sg.beginPath();
+      for (let x = 0; x <= W; x += 8) { sg.moveTo(x * z + 0.5, 0); sg.lineTo(x * z + 0.5, scr.height); }
+      for (let y = 0; y <= H; y += 8) { sg.moveTo(0, y * z + 0.5); sg.lineTo(scr.width, y * z + 0.5); }
+      sg.stroke();
+    }
+    document.getElementById("now").textContent = stats ?
+      `Frame ${frame} · beat ${(b + 1).toFixed(2)} · this frame: ${stats.writes[frame]} tilemap writes, ${stats.pals[frame]} palette writes` : "";
+    document.getElementById("scrub").value = frame;
+    drawChart();
+  }
+  function drawChart() {
+    if (!stats) return;
+    const c = document.getElementById("chart"), g = c.getContext("2d"), W = c.width, H = c.height;
+    const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+    g.clearRect(0, 0, W, H);
+    const cap = Math.max(P.budget.writes, stats.maxW) * 1.1, bw = W / FRAMES;
+    g.fillStyle = css("--teal");
+    stats.writes.forEach((w, f) => { const h = (w / cap) * (H - 14); g.fillRect(f * bw, H - h, Math.max(1, bw - 0.3), h); });
+    const yb = H - (P.budget.writes / cap) * (H - 14);
+    g.strokeStyle = css("--bad"); g.setLineDash([4, 3]); g.beginPath(); g.moveTo(0, yb); g.lineTo(W, yb); g.stroke(); g.setLineDash([]);
+    g.fillStyle = css("--muted"); g.font = "11px IBM Plex Mono, monospace";
+    g.fillText(`tilemap writes per frame; dashed: assumed budget (${P.budget.writes})`, 4, 11);
+    for (let bt = 0; bt <= Math.floor(RUN_BEATS); bt++) g.fillRect(bt * BEAT * FPS * bw, H - 4, 1, 4);
+    g.fillStyle = css("--amber-fill"); g.fillRect(frame * bw, 0, 2, H);
+  }
+
+  // ---------- The table ----------
+  function renderStats() {
+    const B = P.budget, S = P.spr, row = (name, val, lim, note) => {
+      const ok = lim == null || typeof val !== "number" || val <= lim;
+      return `<tr><th scope="row">${name}</th><td class="mono ${ok ? "ok" : "over"}">${val}${lim != null ? ` / ${lim}` : ""}</td><td>${note}</td></tr>`;
+    };
+    const at = (stats.maxAt / FPS / BEAT + 1).toFixed(2), wv = stats.weave;
+    document.getElementById("stats").innerHTML =
+      `<tr><th>Measure</th><th>Used / limit</th><th>What it means</th></tr>` +
+      (stats.split ? row("Unique tiles, top half / bottom half", `${stats.split[0]} / ${stats.split[1]}`, null, "each half must fit 256: at a sprite-0 hit on the middle row the background switches to the second pattern table (works on NROM, UxROM and MMC3)") : "") +
+      row(P.id === "zx" ? "Unique 8 × 8 patterns (bitmap)" : P.model === "rows" || P.id === "c64" ? "Unique characters" : "Unique tiles", stats.unique, stats.split ? 512 : B.tiles,
+        P.twoBit ? "counted as 2-bit shapes, since the colours come from each area's palette" : P.flips ? "counted after flips (this machine can mirror tiles)" : P.model === "rows" || P.id === "c64" ? "in character mode; a bitmap mode removes this limit" : "") +
+      row("Most tilemap writes in one frame", stats.maxW, B.writes, `at beat ${at}${P.model === "swap" ? ", including the DMG's colour changes done as tile swaps" : ""}; budgets are estimates, to be measured`) +
+      (P.model !== "cells" ? row("Most palette writes in one frame", stats.maxP, null, P.model === "rows" ? "colour-register writes, per row through display-list interrupts" : "colour changes, a few bytes in vertical blank") : "") +
+      (P.model === "cells" ? row("Most colour-cell writes in one frame", stats.cellMax, B.writes, P.id === "zx" ? "attribute bytes, including the sparks, which recolour the cells they pass (no sprites)" : "colour RAM bytes: the C64's 16 colours are fixed") : "") +
+      (P.model === "cells" ? row(`Cells needing more than ${B.cellColors} colours`, stats.cellOver, 0, P.id === "zx" ? "attribute clash: one ink and one paper per 8 × 8 cell" : "multicolour cells: background, two shared colours, one of their own") : "") +
+      (P.model === "rows" ? row("Most colours on one character row", stats.rowMax, B.rowColors, "four playfield colours a row besides the background, reloadable between rows") : "") +
+      (P.twoBit ? row("16 × 16 areas needing more than 3 colours", stats.attrMax, 0, stats.attrMax ? "each needs a nudge to the layout or a merged colour" : "every area fits one palette") : "") +
+      row("Colour indices used (background)", stats.colors, B.colors, P.id === "gb" ? "the DMG's 4 shades: the ring's and letters' palette effects become tile swaps" : "including the background colour") +
+      row(wv.kind === "bitmap" ? "Fabric: bitmap cells redrawn per step" : "Fabric: tile graphics redrawn per step", `${wv.n} (${wv.bytes} bytes)`, null,
+        wv.kind === "bitmap" ? "one step every 4 frames, so the work can be spread across them" :
+        P.id === "nes" ? "three versions × three shapes; CHR-RAM (UxROM) copies them in vertical blank, or MMC3 switches one 1 KB bank per step with all 8 steps prebuilt in CHR-ROM" :
+        "three versions × three shapes, copied in vertical blank") +
+      (S ? row(S.players ? "Sprites: sparks and lights (players and missiles)" : "Sprites: sparks and lights", stats.sprMax, S.multiplex || S.players ? null : S.total,
+        `${stats.sprLine} on the busiest line (limit ${S.line})${S.multiplex ? "; 8 hardware sprites reused down the screen with raster interrupts" : S.players ? "; 4 players and 4 missiles, repositioned between rows by display-list interrupts" : ""}; sprite palettes are separate, so they take no background colour`) : "") +
+      (c0 !== c0eff() ? row("Raster bars on this machine", "backdrop pulse", null, P.id === "nes" ? "the NES can't change colours mid-frame cleanly" : "the beeper engine needs the CPU that racing the beam would take") : "") +
+      (c0eff() === "backdrop" ? row("Backdrop writes per frame", 1, null, P.id === "zx" ? "the border colour, one OUT to port 254" : "the universal background colour register") : "") +
+      (c0eff() === "raster" ? row("Background colour writes per frame", "one per lit line", null, "in each line's horizontal blank: line or raster interrupts, display-list interrupts, or HDMA on the GBA") : "") +
+      row("Setup, screen dark", `${stats.setup} tiles placed`, null, "during the 1.5 s lead-in, with no per-frame limit");
+    renderNotes();
+  }
+  const NOTES = {
+    nes: "One pattern table holds 256 background tiles, so the screen is split at the middle row with a sprite-0 hit and each half gets its own table. Colours come from four three-colour palettes, one per 16 × 16 area: the fabric uses the teal and violet the ring's palettes don't, and the sparks live on the sprite layer with its own four palettes.",
+    sms: "448 tiles, tile flipping, and 31 colours from two palettes: everything fits with room to spare, and the line interrupt is free for raster bars.",
+    gg: "The Master System's video chip with a 160 × 144 window: the small letters and a 48-pixel ring, with every Master System feature available.",
+    gb: "One palette of four shades for the whole background, so the ring's lighting and flicker are tile swaps. Sprites have their own two palettes, so the sparks cost no shades.",
+    gba: "Nothing here approaches the GBA's limits; it could add alpha-blended trails or a separate layer for the fabric.",
+    a800: "Character mode allows four playfield colours on a row and 128 characters to a set; the display list can mix modes by row, so the fabric rows can be characters and the logo rows bitmap. The sparks are players, with missiles as their trails, and have their own colour registers.",
+    c64: "256 characters, a colour byte per cell and 16 fixed colours; the logo wants a bitmap mode, the fabric can live in character rows behind a raster split. Eight sprites, reused down the screen, carry the sparks.",
+    zx: "No tiles, no sprites, no palette: a bitmap with one attribute byte per 8 × 8 cell. The fabric is drawn in one ink, brightness as density; the sparks recolour the cells they pass through, a few attribute writes a frame."
+  };
+  function renderNotes() {
+    document.getElementById("notes").innerHTML =
+      `<h2>On the ${P.name}</h2><p>${NOTES[P.id]}</p>` +
+      `<h2>The design</h2><p>The letters sit on tile boundaries: 2 × 4 tiles each on the larger screens, 1 × 3 on the 160 × 144 ones, one tile from the ring and one tile apart. Their strokes are chamfered at 45°, like circuit traces, with a groove inlaid down the middle on the large ones. The O is an octagon broken at its corners, eight segments like the ring, and the A is a capital lambda with a fabric node where its crossbar would be. The ring is 64 pixels in radius (48 on the small screens); its lighting, flicker and flash are palette writes, and the lambdas are revealed a tile at a time.</p>
+      <p>The fabric fills the empty background: eight phase versions of each trace tile, by diagonal, so its pulses keep their staggered diagonal fronts, moved by redrawing only the versions that change. Each voice is a spark with its own path, entering a beat apart: the lead along the top of the square of traces around the ring and down its right side, the harmony along the bottom from the right and up the left side, each inversion running its path backwards. The bass rises up the centre bus, and its figure-again rides the bus into the core on the crash. While the board waits, the three circle the square clockwise, a third of the way apart.</p>
+      <p>The bus: the logo is centred on a tile edge, and a trace is drawn through the middle of a tile, so a grid mirrored about the centre has two traces there, one either side of the edge, four pixels apart. Rather than hide them, the design uses them: they are the fabric's spine, a two-wire bus on each axis, and the bass rides between its rails into the core.</p>
+      <p>The background stays plain on every machine. Junction lights twinkle on the fabric's crossings, as sprites (bitmap and attributes on the Spectrum), mirrored left and right and kept off the sparks' main rows.</p>`;
+  }
+
+  // ---------- Controls ----------
+  const segEl = document.getElementById("presetSeg");
+  segEl.innerHTML = Object.entries(PRESETS).map(([id, p]) => `<button type="button" data-preset="${id}" aria-pressed="${id === "nes"}">${p.name}</button>`).join("");
+  function relayout() { canonCache.clear(); buildGeometry(); setScale(); document.getElementById("scrub").max = FRAMES - 1; simulate(); draw(); }
+  const group = (attr, set) => document.querySelectorAll(`[data-${attr}]`).forEach(btn => btn.addEventListener("click", () => {
+    if (attr === "preset" && playing) stopPlaying();
+    document.querySelectorAll(`[data-${attr}]`).forEach(x => x.setAttribute("aria-pressed", String(x === btn)));
+    set(btn.dataset[attr]);
+    if (attr === "preset") relayout(); else { simulate(); draw(); }
+  }));
+  group("preset", id => { P = PRESETS[id]; P.id = id; });
+  document.getElementById("lights").addEventListener("change", () => { simulate(); draw(); });
+  document.getElementById("grid").addEventListener("change", draw);
+  document.getElementById("scrub").addEventListener("input", e => { if (playing) stopPlaying(); frame = Number(e.target.value); draw(); });
+  // With sound, Play starts from the top and the picture follows the audio clock; without, it runs on its own.
+  let audioT0 = null, playToken = 0;
+  const playBtn = document.getElementById("play");
+  function stopPlaying() { playing = false; audioT0 = null; Chime.stop(); playBtn.textContent = "Play"; }
+  playBtn.addEventListener("click", () => {
+    if (playing) { stopPlaying(); return; }
+    playing = true; playBtn.textContent = "Pause";
+    const token = ++playToken;
+    if (document.getElementById("sound").checked) {
+      frame = 0; draw();
+      if (P.id === "gba" || P.id === "zx") playBtn.textContent = "Preparing…";
+      Chime.play(AUDIO_SYS[P.id]).then(t => {
+        if (token !== playToken || !playing || t == null) return;
+        playBtn.textContent = "Pause"; audioT0 = t; requestAnimationFrame(tick);
+      });
+    } else {
+      if (frame >= FRAMES - 1) frame = 0;
+      t0 = performance.now() - frame / FPS * 1000; requestAnimationFrame(tick);
+    }
+  });
+  function tick(now) {
+    if (!playing) return;
+    const secs = audioT0 != null ? Chime.now() - audioT0 : (now - t0) / 1000;
+    frame = Math.max(0, Math.min(FRAMES - 1, Math.floor(secs * FPS)));   // the clock can read a little before the start
+    draw();
+    if (frame >= FRAMES - 1) { stopPlaying(); return; }
+    requestAnimationFrame(tick);
+  }
+  relayout();
+})();
+</script>
+</body>
+</html>

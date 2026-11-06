@@ -1,0 +1,10 @@
+# Raposa do Sol v0.20 (the M6 exit game) on the Master System II: past
+# the voice sample and the title (button 1 starts), then a few moves:
+# right, up with the boost (button 1 held), left (gg-run --input).
+0    -
+420  1
+426  -
+600  R
+700  U1
+760  L
+840  -

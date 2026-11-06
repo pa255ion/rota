@@ -1,0 +1,175 @@
+cabal-version:      2.4
+name:               m68k
+version:            0.1.0.0
+synopsis:           Shared Motorola 68000: bus-cycle exact reference model (later a Clash core)
+description:
+  Shared by every 68000 system (the Amiga 500 or Atari ST first) and the
+  user's benchmark project (side track P; docs/cpus/m68k.md). Knows nothing
+  about any machine: the caller supplies the bus.
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+  ghc-options:
+    -Wall -Wcompat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    M68k.Spec
+    M68k.Run
+    M68k.Bus
+    M68k.Ops
+    M68k.Datapath
+    M68k.Micro
+    M68k.Core
+  -- M68k.Core is Clash (NoImplicitPrelude in its own header)
+  ghc-options:
+    -O2
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=100
+  build-depends:
+    base,
+    array,
+    bytestring,
+    transformers,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+-- Layer 0: the model against Tom Harte's 680x0 SingleStepTests
+-- (roms/m68k/v1, tools/fetch-roms.sh); the quick tier reads the first
+-- cases of every file, EMU_FULL_TESTS=1 all 8065
+test-suite m68k-spec
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  other-modules:
+    M68k.SingleStep
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M4g" -O2
+  build-depends:
+    base,
+    array,
+    m68k,
+    aeson,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit,
+    transformers,
+    text,
+    zlib
+
+-- P.4: "M68k.Core" (the Clash core) over the same SingleStepTests,
+-- request by request through the model's bus (quick tier: the first cases
+-- of every file the core runs; EMU_FULL_TESTS=1 all)
+test-suite m68k-lockstep
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Lockstep.hs
+  other-modules:
+    M68k.SingleStep
+    M68k.CoreRun
+    M68k.Fuzz
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M4g" -O2
+  build-depends:
+    base,
+    array,
+    m68k,
+    aeson,
+    bytestring,
+    clash-prelude,
+    containers,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit,
+    transformers,
+    text,
+    zlib
+
+-- side track P's working tool: one file's failures by addressing mode
+-- (cabal run m68k-diag -- MOVE.w 1000)
+executable m68k-diag
+  import:           clash-common
+  hs-source-dirs:   test
+  main-is:          Diag.hs
+  other-modules:
+    M68k.SingleStep
+  ghc-options:      -O2 -rtsopts "-with-rtsopts=-M4g"
+  build-depends:
+    base,
+    array,
+    m68k,
+    aeson,
+    bytestring,
+    containers,
+    transformers,
+    text,
+    zlib
+
+-- P.3: "M68k.Run", the model as a library (the benchmark project's)
+test-suite m68k-lib
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Lib.hs
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-M1g" -O2
+  build-depends:
+    base,
+    m68k,
+    bytestring,
+    tasty,
+    tasty-hunit
+
+-- P.3: a program on the model from the command line (the benchmark
+-- project's): m68k-run IMAGE [--at A] [--pc A [--sp A]] [--cycles N |
+-- --instructions N] [--trace]
+executable m68k-run
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Run.hs
+  ghc-options:      -O2 -rtsopts
+  build-depends:
+    base,
+    m68k,
+    bytestring

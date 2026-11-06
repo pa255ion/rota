@@ -1,0 +1,1347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rota boot chime audition</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F4ECD8; --fg: #14111C; --muted: #5B5468; --rule: #D9CCAE; --panel: #EBE0C6;
+  --amber: #A9650A; --amber-fill: #F7A41D; --teal: #17776E; --violet: #5E5086;
+  --focus: #17776E; --screen: #14111C; --screen-edge: #453A62;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14111C; --fg: #F4ECD8; --muted: #A69FB4; --rule: #2E2840; --panel: #1C1827;
+    --amber: #F7A41D; --amber-fill: #F7A41D; --teal: #3CC7B9; --violet: #9C8FD0;
+    --focus: #F7A41D; --screen: #0E0B14; --screen-edge: #453A62;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14111C; --fg: #F4ECD8; --muted: #A69FB4; --rule: #2E2840; --panel: #1C1827;
+  --amber: #F7A41D; --amber-fill: #F7A41D; --teal: #3CC7B9; --violet: #9C8FD0;
+  --focus: #F7A41D; --screen: #0E0B14; --screen-edge: #453A62;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: "Spectral", Georgia, "Times New Roman", serif;
+  font-size: 1.0625rem; line-height: 1.6;
+}
+main { max-width: 56rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+.mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; }
+.screen { background: var(--screen); border: 2px solid var(--screen-edge); border-radius: 6px; padding: clamp(0.75rem, 3vw, 1.75rem); }
+.screen canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+.status { font-size: 0.8125rem; color: var(--muted); margin: 0; min-height: 1.3em; }
+.dispctl { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.6rem 1.25rem; margin-top: 0.6rem; }
+.dispopts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; font-size: 0.95rem; }
+.seg.small button { padding: 0.2rem 0.75rem; font-size: 0.9rem; }
+h1 { font-weight: 600; font-size: clamp(1.75rem, 4.5vw, 2.5rem); line-height: 1.15; letter-spacing: -0.01em; margin: 2.25rem 0 0.5rem; }
+.lede { margin: 0 0 1.75rem; max-width: 38em; color: var(--muted); }
+.controls {
+  display: flex; flex-wrap: wrap; gap: 1rem 1.75rem; align-items: center;
+  padding: 1.25rem 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+}
+button, input, label { font: inherit; }
+.play {
+  background: var(--amber-fill); color: #14111C; border: 0; border-radius: 999px;
+  padding: 0.7rem 1.4rem 0.7rem 1.15rem; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.6rem; min-width: 11rem;
+}
+.play svg { width: 1rem; height: 1rem; }
+.play:hover { filter: brightness(1.06); }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; padding: 3px; background: var(--panel); flex-wrap: wrap; }
+.seg button { background: transparent; color: var(--fg); border: 0; border-radius: 999px; padding: 0.35rem 0.9rem; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.field { display: inline-flex; align-items: center; gap: 0.6rem; color: var(--muted); }
+.field input[type="range"] { accent-color: var(--teal); width: 9rem; }
+.field output { font-size: 0.875rem; color: var(--fg); min-width: 4.5em; }
+.check { display: inline-flex; align-items: center; gap: 0.45rem; cursor: pointer; }
+.check input { accent-color: var(--teal); width: 1rem; height: 1rem; }
+#smsOpt { margin: 0 0 0.75rem; color: var(--muted); }
+#smsOpt[hidden] { display: none; }
+#bassOpt[hidden] { display: none; }
+#bassOpt { flex-wrap: wrap; }
+
+.voices { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1.5rem 0 0.75rem; }
+.voice {
+  background: transparent; border: 1px solid var(--rule); color: var(--fg);
+  border-radius: 6px; padding: 0.35rem 0.75rem 0.35rem 0.6rem; cursor: pointer;
+  text-align: left; line-height: 1.25; display: inline-flex; gap: 0.55rem; align-items: center;
+}
+.voice .sw { width: 0.8rem; height: 0.8rem; border-radius: 2px; flex: none; }
+.voice small { display: block; color: var(--muted); font-size: 0.78rem; }
+.voice[aria-pressed="false"] { opacity: 0.45; }
+.voice[aria-pressed="false"] .name { text-decoration: line-through; }
+.roll-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+.roll { display: block; width: 100%; min-width: 40rem; height: auto; }
+.roll text { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; }
+.readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.25rem 1rem; margin: 0.75rem 0 0; font-size: 0.8rem; color: var(--muted); min-height: 1.4em; }
+.readout b { color: var(--fg); font-weight: 500; }
+.footnote { color: var(--muted); font-size: 0.95rem; max-width: 40em; margin-top: 1.25rem; }
+.footnote p { margin: 0.6rem 0; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="screen" aria-label="Logo display, 64 by 32 pixels">
+    <canvas id="scr" width="768" height="384"></canvas>
+  </div>
+  <div class="dispctl">
+    <p class="status mono" id="status">Press Play, or the space bar.</p>
+    <div class="dispopts">
+      <div class="seg small" role="group" aria-label="Logo layout">
+        <button type="button" data-layout="beside" aria-pressed="false">Wordmark beside</button>
+        <button type="button" data-layout="span" aria-pressed="true">Wordmark spanning</button>
+      </div>
+      <label class="check"><input type="checkbox" id="threads" checked> Threads</label>
+      <label class="field">Thickness
+        <input type="range" id="tw" min="1" max="5" step="1" value="5" style="width:6rem">
+        <output id="twOut" class="mono" for="tw">5 px</output>
+      </label>
+    </div>
+  </div>
+
+  <h1>Boot chime audition</h1>
+  <p class="lede">Three voices over I–vi–IV–ii–V–I in D. A rising figure passes from the lead to the harmony to the
+  bass, a beat apart; then the lead turns it upside down and the harmony answers the same way, and the lead settles
+  on F♯5 while the bass plays the figure once more into the crash, over one roll through the V and
+  I chords. Each voice has a thread in its colour that spins
+  out when it plays the figure and flips when it inverts.</p>
+
+  <div class="controls">
+    <button class="play" id="play" type="button" aria-label="Play the chime">
+      <svg id="playIcon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5v13l11-6.5z" fill="currentColor"/></svg>
+      <span id="playText">Play the chime</span>
+    </button>
+    <div class="seg" role="group" aria-label="Machine">
+      <button type="button" data-sys="pure" aria-pressed="false">Pure tones</button>
+      <button type="button" data-sys="chip8" aria-pressed="false">CHIP-8</button>
+      <button type="button" data-sys="a2600" aria-pressed="false">Atari 2600*</button>
+      <button type="button" data-sys="zx" aria-pressed="false">ZX Spectrum*</button>
+      <button type="button" data-sys="gb" aria-pressed="true">Game Boy</button>
+      <button type="button" data-sys="nes" aria-pressed="false">NES</button>
+      <button type="button" data-sys="coleco" aria-pressed="false">ColecoVision*</button>
+      <button type="button" data-sys="intv" aria-pressed="false">Intellivision*</button>
+      <button type="button" data-sys="sms" aria-pressed="false">Master System*</button>
+      <button type="button" data-sys="a800" aria-pressed="false">Atari 8-bit*</button>
+      <button type="button" data-sys="c64" aria-pressed="false">C64*</button>
+      <button type="button" data-sys="gba" aria-pressed="false">GBA*</button>
+    </div>
+    <label class="field">Tempo
+      <input type="range" id="tempo" min="100" max="190" step="2" value="150">
+      <output id="tempoOut" class="mono" for="tempo">150 bpm</output>
+    </label>
+    <label class="check"><input type="checkbox" id="loop"> Loop</label>
+    <label class="check"><input type="checkbox" id="leadin"> 1.5 s monitor lead-in</label>
+  </div>
+
+  <div class="voices" id="voices" role="group" aria-label="Voices"></div>
+  <div class="field" id="bassOpt" style="margin:0 0 0.75rem">Bass on beat 6
+    <div class="seg small" role="group" aria-label="Bass on beat 6">
+      <button type="button" data-bass="original" aria-pressed="false">Original: D3</button>
+      <button type="button" data-bass="dominant" aria-pressed="false">Dominant: D3 A2</button>
+      <button type="button" data-bass="figure" aria-pressed="true">Figure again: F♯2 A2, D3</button>
+    </div>
+  </div>
+  <label class="check" id="smsOpt" hidden><input type="checkbox" id="smsNoise"> Bass on periodic noise (deeper, but the drums lose their channel)</label>
+  <div class="roll-wrap"><svg class="roll" id="roll" role="img" aria-label="Piano roll of the chime"></svg></div>
+  <div class="readout mono" id="readout"></div>
+
+  <div class="footnote">
+    <p>Click a voice to mute it. Tempo changes take effect on the next play or loop. Machines marked * are hypothetical: no core for them exists in the project.</p>
+    <p id="formula"></p>
+  </div>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- The score: [start beat, end beat, MIDI note] ----------
+  const CHORDS = [["D","I"],["Bm","vi"],["G","IV"],["Em","ii"],["A","V"],["D","I"],["D","I"]];
+  const LAST = 6, END = 8.6, LOOP_BEATS = 11, ROLL = 4, GROW = 5.5;
+  // The rising figure (m3 up, P4 up) enters in the lead, the harmony and the bass a beat apart.
+  // The lead then inverts it (M3 down, m3 down); the harmony imitates the inversion exactly a beat later.
+  const SCORE = {
+    lead: [[0,.5,78],[.5,1,81],[1,3,86],[3,3.5,83],[3.5,4,79],[4,5,76],[5,5.5,81],[5.5,6,79],[6,END,78]],
+    harm: [[0,1,74],[1,1.5,71],[1.5,2,74],[2,3,79],[3,4,76],[4,4.5,73],[4.5,5,69],[5,6,66],[6,END,69]],
+    bass: []
+  };
+  // The bass up to beat 5, then three endings to audition on beat 6 (all consonant with the lead's A5 G5):
+  //   original  D3, then D2 on the crash
+  //   dominant  D3 A2: the second half of the beat becomes A7 (the lead's G5 is its seventh), V7 to I
+  //   figure    F♯2 A2 to D3: the opening figure (m3 up, P4 up) once more, on the lead's first three
+  //             pitch classes, landing on the crash
+  const BASS_HEAD = [[0,1,38],[1,2,35],[2,2.5,43],[2.5,3,47],[3,4,52],[4,5,45]];
+  const BASS_TAILS = {
+    original: [[5,6,50],[6,END,38]],
+    dominant: [[5,5.5,50],[5.5,6,45],[6,END,38]],
+    figure:   [[5,5.5,42],[5.5,6,45],[6,END,50]]
+  };
+  let bassEnd = "figure";   // chosen 2026-10-06
+  const setBass = () => { SCORE.bass = BASS_HEAD.concat(BASS_TAILS[bassEnd]); };
+  setBass();
+  const MOTIFS = [
+    { v: "lead", a: 0, b: 1.5, label: "figure" }, { v: "harm", a: 1, b: 2.5, label: "figure" },
+    { v: "bass", a: 2, b: 3.5, label: "figure" }, { v: "lead", a: 3, b: 4.5, label: "inverted" },
+    { v: "harm", a: 4, b: 5.5, label: "inverted" }, { v: "bass", a: 5, b: 6.5, label: "figure, again", only: "figure" },
+    { v: "bass", a: 5, b: 6, label: "V7", only: "dominant" }, { v: "drums", a: 4, b: 6.6, label: "roll, crescendo through V and I" }
+  ];
+  // [beat, kind, volume 0..15, roll step]: a plain groove, then one roll through the V and I chords
+  // (sixteenths, then thirty-seconds) rising in pitch and swelling from 3 to 14 into the crash.
+  const DRUMS = [
+    [0,"kick",12],[.5,"hat",5],[1,"snare",11],[1.5,"hat",5],[2,"kick",12],[2.5,"hat",5],[3,"snare",11],[3.5,"hat",5],
+    [4,"roll",3,0],[4.25,"roll",4,0],[4.5,"roll",5,1],[4.75,"roll",6,1],
+    [5,"roll",7,2],[5.125,"roll",8,2],[5.25,"roll",9,3],[5.375,"roll",10,3],
+    [5.5,"roll",11,4],[5.625,"roll",12,4],[5.75,"roll",13,5],[5.875,"roll",14,5],
+    [LAST,"crash",15]];
+  const ROLL_HITS = DRUMS.filter(d => d[1] === "roll").map(d => d[0]);
+  const NAMES = ["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
+  const noteName = m => NAMES[m % 12] + (Math.floor(m / 12) - 1);
+  const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
+  const hex = (v, n) => "$" + v.toString(16).toUpperCase().padStart(n, "0");
+  const cents = (got, want) => 1200 * Math.log2(got / want);
+  const CPU = 1789773, PSG = 3579545;
+  const smsNoiseBass = () => document.getElementById("smsNoise").checked;
+
+  // ---------- Machines ----------
+  const SYS = {
+    pure: {
+      voices: { lead: "Sine", harm: "Sine", bass: "Sine", drums: "Filtered noise" },
+      pitch: (v, f) => ({ hz: f, reg: f.toFixed(1) + " Hz" }),
+      formula: "Exact equal temperament, A4 = 440 Hz, with smooth legato: a reference for the harmony itself."
+    },
+    chip8: {
+      voices: { buzz: "Buzzer, 440 Hz" },
+      formula: "One buzzer at a fixed pitch, driven by the 60 Hz sound timer. Legato can't exist with a single pitch (tied notes would merge into one tone), so the lead's rhythm survives as short beeps, each start rounded to a 60 Hz frame, and a long last one."
+    },
+    gb: {
+      voices: { lead: "Pulse 1, 25 %", harm: "Pulse 2, 50 %", bass: "Wave, 4-bit sine", drums: "Noise" },
+      pitch: (v, f) => {
+        if (v === "bass") { const x = Math.round(2048 - 65536 / f); return { hz: 65536 / (2048 - x), reg: "x=" + hex(x, 3) }; }
+        const x = Math.round(2048 - 131072 / f); return { hz: 131072 / (2048 - x), reg: "x=" + hex(x, 3) };
+      },
+      formula: "Pulse 131072 / (2048 − x) Hz, wave 65536 / (2048 − x) Hz. Legato as a sound driver plays it: new frequencies are written without retriggering, so the volume holds steady through each phrase (the Game Boy can't change volume without a retrigger). The final note is retriggered with a decaying envelope. Bends and vibrato are frequency writes every frame, so they step through the real register values. The open hat uses the noise channel's 7-bit mode for a metallic ring, and the roll climbs through six real noise frequency settings as it gets louder."
+    },
+    nes: {
+      voices: { lead: "Pulse 1, 25 %", harm: "Pulse 2, 50 %", bass: "Triangle", drums: "Noise" },
+      pitch: (v, f) => {
+        if (v === "bass") { const t = Math.round(CPU / (32 * f) - 1); return { hz: CPU / (32 * (t + 1)), reg: "t=" + hex(t, 3) }; }
+        const t = Math.round(CPU / (16 * f) - 1); return { hz: CPU / (16 * (t + 1)), reg: "t=" + hex(t, 3) };
+      },
+      formula: "Pulse 1789773 / (16 (t + 1)) Hz, triangle 1789773 / (32 (t + 1)) Hz with its 32-step staircase and no volume control. Every lead and harmony note has t < 256, so legato only rewrites the low period byte, never the high byte that would restart the waveform. Pulse volume is a software envelope in constant-volume mode, accented on each note. Bends and vibrato are period writes every frame. Around D6 one step of t is about 18 cents, wider than the ±15-cent vibrato, so there the vibrato flickers between neighbouring values. The open hat uses noise mode 1, the short metallic sequence, and the roll climbs six entries up the noise period table as it gets louder."
+    },
+    sms: {
+      voices: {},
+      // Tone 3 can't go below 3579545 / (32 × 1023) ≈ 109 Hz: lower bass notes go up an octave,
+      // unless the bass is periodic noise clocked by tone 3, which sounds a sixteenth of tone 3's pitch.
+      note: (v, m) => (v === "bass" && !smsNoiseBass() && midiHz(m) < PSG / (32 * 1023)) ? m + 12 : m,
+      pitch: (v, f) => {
+        if (v === "bass" && smsNoiseBass()) { const n = Math.round(PSG / (512 * f)); return { hz: PSG / (512 * n), reg: "N=" + hex(n, 3) + " ÷16" }; }
+        const n = Math.max(1, Math.min(1023, Math.round(PSG / (32 * f)))); return { hz: PSG / (32 * n), reg: "N=" + hex(n, 3) };
+      },
+      formula: ""
+    }
+  };
+  const SIDCLK = 985248, POKEY = 1789773, P64 = POKEY / 28, TIA = 3579545 / 114;
+  SYS.c64 = {
+    voices: { lead: "Voice 1, pulse, width sweeping", harm: "Voice 2, sawtooth", bass: "Voice 3, pulse through the filter", drums: "Borrows voice 3 (noise)" },
+    pitch: (v, f) => { const n = Math.round(f * 16777216 / SIDCLK); return { hz: n * SIDCLK / 16777216, reg: "F=" + hex(n, 4) }; },
+    steal: true,
+    formula: "Hypothetical. The SID (6581, PAL clock 985248 Hz) has three voices, each with its own waveform and envelope, at 985248 × F / 16777216 Hz for a 16-bit F, so its pitch is almost exact. The lead is a pulse wave whose width sweeps slowly (pulse-width modulation), the harmony a sawtooth, and the bass a pulse through the resonant low-pass filter, swept down on each note. With no fourth voice, the drums borrow the bass voice for a frame or two at a time and switch it to noise, as C64 composers did; that is also why the crash is a short burst."
+  };
+  SYS.a800 = {
+    voices: { lead: "Channel 3, pure tone, 64 kHz clock", harm: "Channel 4, pure tone, 64 kHz clock", bass: "Channels 1 and 2 joined: 16-bit at 1.79 MHz", drums: "Borrows the bass pair (noise)" },
+    pitch: (v, f) => {
+      if (v === "bass") { const n = Math.round(POKEY / (2 * f) - 7); return { hz: POKEY / (2 * (n + 7)), reg: "N=" + hex(n, 4) }; }
+      const n = Math.max(0, Math.min(255, Math.round(P64 / (2 * f) - 1))); return { hz: P64 / (2 * (n + 1)), reg: "AUDF=" + hex(n, 2) };
+    },
+    steal: true,
+    formula: "Hypothetical. POKEY has four square-wave channels. At the 64 kHz clock a channel sounds 63920 / (2 (AUDF + 1)) Hz with an 8-bit AUDF, so high notes land up to about 20 cents off, POKEY's slightly sour charm, and small bends and vibrato barely move. The bass joins channels 1 and 2 into one 16-bit channel clocked at 1.79 MHz, 1789773 / (2 (N + 7)) Hz, which tunes it closely but uses the fourth channel, so the drums borrow the bass pair. On screen the letters get a colour gradient that changes every scanline and scrolls: the display-list-interrupt trick."
+  };
+  SYS.a2600 = {
+    voices: { lead: "Channel 0, square (AUDC 4)", harm: "No channel left", bass: "Channel 1, AUDC 1 or 6 per note", drums: "Borrows channel 1 (AUDC 8 noise)" },
+    pitch: (v, f) => {
+      if (v === "bass") {
+        let best = null;
+        for (const [audc, len, wave] of [[1, 15, "poly4"], [6, 31, "div31"]]) for (let F = 0; F < 32; F++) {
+          const hz = TIA / (len * (F + 1)), c = Math.abs(cents(hz, f));
+          if (!best || c < best.c) best = { c, hz, wave, reg: `AUDC ${audc}, F=${F}` };
+        }
+        return best;
+      }
+      const F = Math.max(0, Math.min(31, Math.round(TIA / (2 * f) - 1)));
+      return { hz: TIA / (2 * (F + 1)), wave: "p50", reg: `AUDC 4, F=${F}` };
+    },
+    steal: true, noHarm: true,
+    formula: "Hypothetical. The TIA has two channels, each with a 5-bit divider (32 settings) and a 4-bit waveform select, so most notes can't be tuned. The lead uses the square wave (AUDC 4, 31400 / (2 (F + 1)) Hz), and D6 comes out almost half a semitone sharp. The bass picks, per note, whichever of two buzzier waveforms gets closer: AUDC 1 (a 15-step pattern) or AUDC 6 (31 steps). Two channels leave no room for the harmony, and the drums borrow the bass channel. Bends and vibrato are left out, since with 32 pitches they would be jumps. The picture follows the playfield's rule of one colour per scanline, and the threads, which would need sprites the 2600 doesn't have spare, are gone."
+  };
+  const AYCLK = 894886, ZXRATE = 3500000 / 192, GBARATE = 13379, GBABASE = GBARATE / 64;
+  SYS.coleco = {
+    voices: { lead: "Tone 1, square", harm: "Tone 2, square", bass: "Tone 3, square", drums: "Noise, white (15-bit)" },
+    note: (v, m) => (v === "bass" && midiHz(m) < PSG / (32 * 1023)) ? m + 12 : m,
+    pitch: (v, f) => { const n = Math.max(1, Math.min(1023, Math.round(PSG / (32 * f)))); return { hz: PSG / (32 * n), reg: "N=" + hex(n, 3) }; },
+    formula: "Hypothetical. The ColecoVision uses Texas Instruments' SN76489, the chip the Master System's sound is based on, at the same 3.58 MHz clock: three square-wave tones at 3579545 / (32 N) Hz and one noise channel. So the music matches the Master System's default setting note for note, with the same octave shifts for low bass notes (marked ↑8). The noise comes from TI's 15-bit shift register rather than Sega's 16-bit one, a slightly different hiss. On screen, the TMS9918's colour rule: each 8-pixel row segment can hold only two colours, so where a thread meets the ring, one colour wins."
+  };
+  SYS.intv = {
+    voices: { lead: "Channel A, square", harm: "Channel B, square", bass: "Channel C, envelope as waveform (buzzer)", drums: "Borrows channel C (noise)" },
+    pitch: (v, f) => {
+      if (v === "bass") { const n = Math.max(1, Math.round(AYCLK / (256 * f))); return { hz: AYCLK / (256 * n), reg: "EP=" + hex(n, 4) }; }
+      const n = Math.max(1, Math.min(4095, Math.round(AYCLK / (16 * f)))); return { hz: AYCLK / (16 * n), reg: "TP=" + hex(n, 3) };
+    },
+    steal: true,
+    formula: "Hypothetical. The Intellivision's AY-3-8914 (a General Instrument PSG, kin to the AY-3-8910) has three square-wave tones, one noise source and one envelope generator, with logarithmic 4-bit volume. Assuming it runs at the CPU's 894886 Hz clock, a tone sounds 894886 / (16 TP) Hz with a 12-bit TP. The lead and harmony are tones. The bass uses the envelope generator as a waveform, a repeating ramp at bass pitch of about 894886 / (256 EP) Hz, the AY's 'buzzer' trick, and the drums borrow channel C for noise. On screen, one foreground colour per 8 × 8 card."
+  };
+  SYS.zx = {
+    voices: { lead: "Beeper, pin-pulse voice 1", harm: "Beeper, pin-pulse voice 2", bass: "Beeper, pin-pulse voice 3", drums: "Interrupting drums" },
+    pitch: (v, f) => { const n = Math.round(f * 65536 / ZXRATE); return { hz: n * ZXRATE / 65536, reg: "step=" + hex(n, 4) }; },
+    render: true, rerenderOnMute: true,
+    formula: "Hypothetical, and the strangest one: the 48K Spectrum has no sound chip, only a one-bit beeper the CPU toggles itself. Music engines fake several voices by mixing very short pulses ('pin pulses') from each voice into the one bit, a pulse's width standing in for its volume, so all three voices play, thin and buzzy. This one updates about 18,230 times a second (an engine loop of 192 cycles at 3.5 MHz, assumed) with 16-bit pitch counters, so it tunes closely. The drums are interrupting drums: the tone loop stops for a few milliseconds while the CPU plays noise, so every hit cuts all three voices, and the roll's crescendo is its bursts getting longer. Muting a voice re-renders the mix. On screen, colours are per 8 × 8 cell (attribute clash), and the border flashes with the drums, which engines often do because the beeper and the border colour share one output port. A 128K Spectrum's AY chip would sound much like the Intellivision."
+  };
+  SYS.gba = {
+    voices: { lead: "Direct Sound: flute sample", harm: "Direct Sound: string ensemble", bass: "Direct Sound: plucked bass", drums: "Direct Sound: drum kit samples" },
+    pitch: (v, f) => ({ hz: f, reg: "rate ×" + (f / GBABASE).toFixed(3) }),
+    render: true,
+    formula: "Hypothetical. The Game Boy Advance plays music mostly through Direct Sound: two 8-bit sample channels that a software engine fills. Here that is modelled on Nintendo's own 'm4a' engine, which commonly mixes sampled instruments at 13379 Hz and adds its built-in reverb. So the instruments are samples, not waveforms: a flute-like lead with vibrato, a two-layer string ensemble for the harmony, a plucked bass, and a sampled kit whose snare roll speeds up, rises and swells into a crash cymbal. Pitch is a sample's playback rate, so it is nearly exact; the engine has vibrato but no portamento. The mix is rendered at 13379 Hz and rounded to 8 bits, the source of the GBA's slightly grainy sound. On screen, 15-bit colour, translucent threads (alpha blending), and the hardware mosaic effect clearing during the first beat."
+  };
+  function smsLabels() {
+    const nb = smsNoiseBass();
+    SYS.sms.voices = { lead: "Tone 1, square", harm: "Tone 2, square",
+      bass: nb ? "Noise, periodic, clocked by tone 3" : "Tone 3, square", drums: nb ? "No channel left" : "Noise, white" };
+    SYS.sms.formula = "Hypothetical. The Master System's SN76489 has three square-wave tones, 3579545 / (32 N) Hz with a 10-bit N, and one noise channel. Volume is 4-bit attenuation in 2 dB steps with no hardware envelopes, so every envelope, bend and vibrato here is software, written per frame. " +
+      (nb ? "The bass uses the classic trick: noise in periodic mode clocked by a silenced tone 3 sounds a sixteenth of tone 3's pitch as a thin, buzzy pulse that reaches the low notes. The noise channel is then taken, so the drums drop out."
+          : "Tone 3 can't go below about 109 Hz, so bass notes under A2 move up an octave (marked ↑8 in the roll). The drums use white noise at the chip's fixed shift rates of 1748, 3496 and 6991 Hz, which gives the Master System its soft, dull percussion. With only three rates, the roll can climb in just two pitch steps; its rise is mostly volume.");
+  }
+  smsLabels();
+  const noteOf = (v, m) => SYS[sys].note ? SYS[sys].note(v, m) : m;
+
+  const LANES = [
+    { v: "lead", label: "Lead", color: "--amber" },
+    { v: "harm", label: "Harmony", color: "--teal" },
+    { v: "bass", label: "Bass", color: "--violet" },
+    { v: "drums", label: "Drums", color: "--muted" }
+  ];
+
+  let sys = "gb";
+  const muted = { lead: false, harm: false, bass: false, drums: false, buzz: false };
+  let ctx = null, master = null, run = null;
+  const waves = {}, noiseBufs = {};
+
+  // ---------- CHIP-8 rhythm, derived from the lead (frames at 150 bpm) ----------
+  const CHIP8 = SCORE.lead.map(([s, e], i) => ({
+    s, frames: i === SCORE.lead.length - 1 ? 30 : Math.max(3, Math.min(12, Math.round((e - s) * 0.4 * 24)))
+  }));
+
+  // ---------- Voice buttons and piano roll ----------
+  const voicesEl = document.getElementById("voices"), rollEl = document.getElementById("roll");
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  function buildVoices() {
+    const S = SYS[sys];
+    const list = sys === "chip8" ? [{ v: "buzz", label: "Rhythm", color: "--amber" }] : LANES;
+    voicesEl.innerHTML = list.map(l =>
+      `<button type="button" class="voice" data-voice="${l.v}" aria-pressed="${!muted[l.v]}">
+        <span class="sw" style="background:var(${l.color})"></span>
+        <span><span class="name">${l.label}</span><small>${S.voices[l.v]}</small></span></button>`).join("");
+    document.getElementById("formula").textContent = S.formula;
+    document.getElementById("smsOpt").hidden = sys !== "sms";
+    document.getElementById("bassOpt").hidden = sys === "chip8";
+  }
+  document.getElementById("smsNoise").addEventListener("change", () => {
+    const was = !!run; if (run) stopRun();
+    smsLabels(); buildVoices(); buildRoll();
+    if (was) setTimeout(startRun, 60);
+  });
+  document.querySelectorAll("[data-bass]").forEach(btn => btn.addEventListener("click", () => {
+    const was = !!run; if (run) stopRun();
+    bassEnd = btn.dataset.bass; setBass();
+    document.querySelectorAll("[data-bass]").forEach(x => x.setAttribute("aria-pressed", String(x === btn)));
+    buildRoll();
+    if (was) setTimeout(startRun, 60);
+  }));
+  voicesEl.addEventListener("click", e => {
+    const b = e.target.closest(".voice"); if (!b) return;
+    const v = b.dataset.voice; muted[v] = !muted[v];
+    b.setAttribute("aria-pressed", String(!muted[v]));
+    if (run && SYS[sys].rerenderOnMute) { stopRun(); setTimeout(startRun, 60); }
+    else if (run && run.gains[v]) run.gains[v].gain.setTargetAtTime(muted[v] ? 0 : 1, ctx.currentTime, 0.01);
+    buildRoll();
+  });
+
+  const GUT = 96, UNIT = 100, TOP = 30;
+  const LANE_Y = { lead: [TOP, 84], harm: [TOP + 90, 84], bass: [TOP + 180, 84], drums: [TOP + 270, 60], buzz: [TOP, 60] };
+  const RANGE = { lead: [76, 88], harm: [64, 81], bass: [33, 55] };
+  let playhead = null;
+  function buildRoll() {
+    const W = GUT + END * UNIT + 10, H = sys === "chip8" ? TOP + 70 : TOP + 338;
+    rollEl.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const fg = css("--fg"), mu = css("--muted"), ru = css("--rule");
+    let s = "";
+    for (let b = 0; b <= 9; b++) {
+      const x = GUT + b * UNIT;
+      s += `<line x1="${x}" y1="${TOP - 6}" x2="${x}" y2="${H}" stroke="${ru}" stroke-width="1"/>`;
+      if (b < CHORDS.length) s += `<text x="${x + 6}" y="${TOP - 12}" font-size="13" fill="${fg}">${CHORDS[b][0]} <tspan fill="${mu}" font-size="11">${CHORDS[b][1]}</tspan></text>`;
+    }
+    const S = SYS[sys];
+    if (sys === "chip8") {
+      const [y, h] = LANE_Y.buzz;
+      s += `<text x="8" y="${y + h / 2 + 4}" font-size="12" fill="${mu}">Rhythm</text>`;
+      const am = css("--amber"), op = muted.buzz ? 0.3 : 1;
+      for (const n of CHIP8) {
+        const w = Math.max(3, n.frames / 60 * 2.5 * UNIT);
+        s += `<rect x="${GUT + n.s * UNIT}" y="${y + 18}" width="${w}" height="${h - 36}" rx="2" fill="${am}" opacity="${op}"><title>ST ${n.frames}</title></rect>`;
+      }
+    } else {
+      for (const l of LANES) {
+        const [y, h] = LANE_Y[l.v], col = css(l.color);
+        const off = muted[l.v] || (l.v === "drums" && sys === "sms" && smsNoiseBass()) || (l.v === "harm" && SYS[sys].noHarm);
+        const op = off ? 0.25 : 1;
+        s += `<text x="8" y="${y + 24}" font-size="12" fill="${mu}">${l.label}</text>`;
+        for (const mo of MOTIFS.filter(x => x.v === l.v && (!x.only || x.only === bassEnd))) {
+          const x1 = GUT + mo.a * UNIT + 2, x2 = GUT + mo.b * UNIT - 4, yb = y + 4 + (mo.label.startsWith("rising") ? 64 : 0);
+          s += `<path d="M${x1} ${yb + 5}V${yb}H${x2}V${yb + 5}" fill="none" stroke="${col}" stroke-width="1.2" opacity="${0.75 * op}"/>`;
+          s += `<text x="${x1 + 4}" y="${yb + 14}" font-size="10" fill="${col}" opacity="${op}">${mo.label}</text>`;
+        }
+        if (l.v === "drums") {
+          const kh = { kick: 30, snare: 22, ghost: 9, hat: 12, ohat: 16, crash: 38 };
+          const names = { kick: "kick", snare: "snare", ghost: "ghost snare", hat: "closed hat", ohat: "open hat", roll: "roll", crash: "crash" };
+          for (const [b, k, vol] of DRUMS) {
+            const hh = k === "roll" ? 4 + vol * 2.3 : kh[k];
+            const w = k === "crash" ? 60 : k === "ohat" ? 26 : k === "roll" ? 6 : 8;
+            s += `<rect x="${GUT + b * UNIT}" y="${y + h - hh}" width="${w}" height="${hh}" rx="1.5" fill="${col}" opacity="${op * (0.45 + vol / 28)}"><title>${names[k]}, volume ${vol}</title></rect>`;
+          }
+          continue;
+        }
+        const [lo, hi] = RANGE[l.v], nh = 9;
+        for (const [a, e, m0] of SCORE[l.v]) {
+          const m = noteOf(l.v, m0);
+          const x = GUT + a * UNIT, w = (e - a) * UNIT - 2;
+          const yy = y + 22 + (h - nh - 36) * (1 - (Math.min(hi, m) - lo) / (hi - lo));
+          const p = S.pitch(l.v, midiHz(m)), c = cents(p.hz, midiHz(m));
+          const tip = `${noteName(m)}  ${p.reg}${sys === "pure" ? "" : `  ${c >= 0 ? "+" : "−"}${Math.abs(c).toFixed(1)}¢`}`;
+          s += `<rect x="${x}" y="${yy}" width="${w}" height="${nh}" rx="2" fill="${col}" opacity="${op}"><title>${tip}</title></rect>`;
+          if (w >= 44) s += `<text x="${x + 3}" y="${yy + nh + 11}" font-size="10.5" fill="${mu}" opacity="${op}">${noteName(m)}${m !== m0 ? " ↑8" : ""}</text>`;
+        }
+      }
+    }
+    s += `<line id="ph" x1="0" y1="${TOP - 6}" x2="0" y2="${H}" stroke="${css("--amber-fill")}" stroke-width="2" visibility="hidden"/>`;
+    rollEl.innerHTML = s;
+    playhead = rollEl.querySelector("#ph");
+  }
+
+  // ---------- Audio: waveforms ----------
+  // Fourier series of a piecewise-constant period: exact for a hardware staircase.
+  function stepWave(samples) {
+    const H = 120, L = samples.length, mean = samples.reduce((a, b) => a + b, 0) / L;
+    const re = new Float32Array(H + 1), im = new Float32Array(H + 1);
+    for (let n = 1; n <= H; n++) {
+      let a = 0, b = 0;
+      for (let i = 0; i < L; i++) {
+        const t0 = 2 * Math.PI * i / L, t1 = 2 * Math.PI * (i + 1) / L, v = samples[i] - mean;
+        a += v * (Math.sin(n * t1) - Math.sin(n * t0)) / n;
+        b += v * (Math.cos(n * t0) - Math.cos(n * t1)) / n;
+      }
+      re[n] = a / Math.PI; im[n] = b / Math.PI;
+    }
+    return ctx.createPeriodicWave(re, im);
+  }
+  function buildWaves() {
+    waves.p25 = stepWave([1,0,0,0,0,0,0,1]);
+    waves.p50 = stepWave([1,1,1,1,0,0,0,0]);
+    waves.aySaw = stepWave(Array.from({ length: 16 }, (_, i) => Math.pow(2, (i - 15) / 2)));   // AY envelope ramp, log levels
+    waves.poly4 = stepWave([1,1,1,1,0,0,0,1,0,0,1,1,0,1,0]);                // TIA AUDC 1: the 4-bit poly's 15 steps
+    waves.div31 = stepWave(Array.from({ length: 31 }, (_, i) => i < 18 ? 1 : 0)); // TIA AUDC 6: 18 high, 13 low
+    waves.p16 = stepWave([1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);   // periodic noise: one bit in sixteen
+    const sine4 = []; for (let i = 0; i < 32; i++) sine4.push(Math.round(7.5 + 7.5 * Math.sin(2 * Math.PI * (i + 0.5) / 32)));
+    waves.gbWave = stepWave(sine4);
+    const tri = []; for (let i = 0; i < 16; i++) tri.push(15 - i); for (let i = 0; i < 16; i++) tri.push(i);
+    waves.nesTri = stepWave(tri);
+  }
+  // 15-bit LFSR noise, the shape the Game Boy and NES share: bit0 xor bit1 into bit 14.
+  // short = the metallic mode: Game Boy 7-bit width (feedback also into bit 6), NES mode 1 (taps 0 and 6).
+  function lfsrBuffer(rate, seconds, short, nes) {
+    const key = rate + ":" + seconds + ":" + (short ? (nes ? "n" : "g") : ""); if (noiseBufs[key]) return noiseBufs[key];
+    const sr = ctx.sampleRate, n = Math.floor(sr * seconds);
+    const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    let reg = 1, acc = 0; const step = rate / sr;
+    for (let i = 0; i < n; i++) {
+      acc += step;
+      while (acc >= 1) {
+        acc -= 1;
+        const fb = (reg ^ (reg >> (short && nes ? 6 : 1))) & 1;
+        reg = (reg >> 1) | (fb << 14);
+        if (short && !nes) reg = (reg & ~0x40) | (fb << 6);
+      }
+      d[i] = (reg & 1) ? -1 : 1;
+    }
+    return (noiseBufs[key] = buf);
+  }
+  // SN76489 white noise: 16-bit LFSR, taps 0 and 3, fixed shift rates of clock / 512, / 1024, / 2048.
+  function smsNoiseBuffer(rate, seconds) {
+    const key = "sms:" + rate; if (noiseBufs[key]) return noiseBufs[key];
+    const sr = ctx.sampleRate, n = Math.floor(sr * seconds);
+    const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    let reg = 0x8000, acc = 0; const step = rate / sr;
+    for (let i = 0; i < n; i++) {
+      acc += step;
+      while (acc >= 1) { acc -= 1; const fb = (reg ^ (reg >> 3)) & 1; reg = (reg >> 1) | (fb << 15); }
+      d[i] = (reg & 1) ? 1 : -1;
+    }
+    return (noiseBufs[key] = buf);
+  }
+  function whiteBuffer(seconds) {
+    const key = "white:" + seconds; if (noiseBufs[key]) return noiseBufs[key];
+    const sr = ctx.sampleRate, n = Math.floor(sr * seconds);
+    const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    return (noiseBufs[key] = buf);
+  }
+  function ensureAudio() {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 14000;
+      const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 30;
+      master = ctx.createGain(); master.gain.value = 0.85;
+      master.connect(lp); lp.connect(hp); hp.connect(ctx.destination);
+      buildWaves();
+    }
+    if (ctx.state === "suspended") ctx.resume();
+  }
+
+  // ---------- Legato voices ----------
+  // Consecutive notes form one phrase: one oscillator, frequency changed in place, never restarted.
+  function phrases(notes) {
+    const out = []; let cur = null;
+    for (const n of notes) {
+      if (cur && Math.abs(cur[cur.length - 1][1] - n[0]) < 1e-6) cur.push(n);
+      else { cur = [n]; out.push(cur); }
+    }
+    return out;
+  }
+  function playVoice(bus, v, wave, peak, level, t0, beat, opts = {}) {
+    const P = SYS[sys];
+    for (const ph of phrases(SCORE[v])) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      if (typeof wave === "string") o.type = wave; else o.setPeriodicWave(wave);
+      const T = t => t0 + t * beat;
+      const events = [];
+      let out = o;
+      if (opts.pwm) {
+        // SID pulse with a moving width: a sawtooth minus itself delayed by width / f
+        o.type = "sawtooth";
+        const d = ctx.createDelay(0.05), inv = ctx.createGain(), mix = ctx.createGain();
+        inv.gain.value = -1;
+        o.connect(mix); o.connect(d); d.connect(inv); inv.connect(mix);
+        out = mix; opts._delay = d;
+      }
+      if (opts.chain) out = opts.chain(out, ph, T);
+      const start = t0 + ph[0][0] * beat, stop = t0 + ph[ph.length - 1][1] * beat;
+      // Pitch is written once per frame, as a sound driver would, so every bend and vibrato
+      // lands on the chip's real period steps. Melodic voices glide into each new note
+      // (portamento), scoop up into the first note of a phrase, and add vibrato to held notes.
+      const melodic = v !== "bass", FR = sys === "pure" ? 1 / 240 : 1 / 60;
+      const q = f => P.pitch(v, f).hz, set = (f, t) => { const hz = q(f); o.frequency.setValueAtTime(hz, t); events.push([t, hz]); };
+      let prevF = null;
+      for (const [a, e, m0] of ph) {
+        const f = midiHz(noteOf(v, m0)), ta = t0 + a * beat, te = t0 + e * beat, dur = te - ta;
+        let t = ta;
+        if (melodic && !opts.noBends) {
+          const from = prevF ?? f * Math.pow(2, -40 / 1200);
+          const G = prevF ? Math.min(0.04, dur * 0.2) : 0.035;
+          for (; t < ta + G; t += FR) {
+            const u = (t - ta) / G, ease = 1 - (1 - u) * (1 - u);
+            set(from * Math.pow(f / from, ease), t);
+          }
+        }
+        set(f, t);
+        if (melodic && !opts.noBends && dur >= 0.3) {
+          const last = e === END, depth = last ? 20 : 15, delay = last ? 0.2 : 0.11, rate = 5.8;
+          for (let tt = ta + delay; tt < te; tt += FR) {
+            const w = Math.min(1, (tt - ta - delay) / 0.18);
+            set(f * Math.pow(2, depth * w * Math.sin(2 * Math.PI * rate * (tt - ta - delay)) / 1200), tt);
+          }
+        }
+        prevF = f;
+      }
+      if (opts.pwm) {
+        // width 0.25 to 0.75 and back, a slow triangle sweep, written once a frame
+        events.sort((x, y) => x[0] - y[0]);
+        let k = 0, hz = events[0][1];
+        for (let t = start; t < stop; t += 1 / 60) {
+          while (k < events.length && events[k][0] <= t) hz = events[k++][1];
+          const ph2 = ((t - start) * 0.9) % 2, w = 0.25 + 0.5 * (ph2 < 1 ? ph2 : 2 - ph2);
+          opts._delay.delayTime.setValueAtTime(w / hz, t);
+        }
+      }
+      g.gain.setValueAtTime(0, 0);
+      level(g.gain, ph, T, peak);
+      out.connect(g); g.connect(bus);
+      o.start(start); o.stop(stop + 0.15);
+      run.nodes.push(o);
+    }
+  }
+  const lv = (peak, v) => peak * v / 15;
+  // Game Boy: constant volume through a phrase; the last note retriggers with a decaying envelope.
+  const gbLevel = (vol, finalEnvSteps) => (g, ph, T, peak) => {
+    g.setValueAtTime(lv(peak, vol), T(ph[0][0]));
+    const last = ph[ph.length - 1];
+    if (last[1] === END) {
+      let v = vol + 1, t = T(last[0]); const step = finalEnvSteps / 64;
+      while (v > 0 && t < T(END)) { g.setValueAtTime(lv(peak, v), t); v--; t += step; }
+    }
+    g.setValueAtTime(0, T(last[1]));
+  };
+  // NES: software envelope per frame in constant-volume mode, accented at each note.
+  const nesLevel = (acc, sus) => (g, ph, T, peak) => {
+    for (const [a, e] of ph) {
+      let v = acc, t = T(a);
+      while (t < T(e)) {
+        g.setValueAtTime(lv(peak, v), t);
+        if (v > sus) v--;
+        else if (e === END && t > T(a) + (T(e) - T(a)) * 0.45) v = Math.max(0, v - 1);
+        t += (e === END && v <= sus) ? 4 / 60 : 1 / 60;
+      }
+    }
+    g.setValueAtTime(0, T(ph[ph.length - 1][1]));
+  };
+  // Master System: 4-bit attenuation, 2 dB a step, written per frame (no hardware envelope).
+  const att = (peak, a) => a >= 15 ? 0 : peak * Math.pow(10, -a / 10);
+  const smsLevel = (accent, sus) => (g, ph, T, peak) => {
+    for (const [a, e] of ph) {
+      let n = accent, t = T(a);
+      while (t < T(e)) {
+        g.setValueAtTime(att(peak, n), t);
+        if (n < sus) n++;
+        else if (e === END && t > T(a) + (T(e) - T(a)) * 0.4) n = Math.min(15, n + 1);
+        t += (e === END && n >= sus) ? 4 / 60 : 2 / 60;
+      }
+    }
+    g.setValueAtTime(0, T(ph[ph.length - 1][1]));
+  };
+  // SID: attack, decay to sustain, held through the phrase (legato never re-gates); the last note releases.
+  const sidLevel = (g, ph, T, peak) => {
+    const t = T(ph[0][0]), last = ph[ph.length - 1];
+    g.setValueAtTime(0, t); g.linearRampToValueAtTime(peak, t + 0.006);
+    g.setTargetAtTime(peak * 0.7, t + 0.006, 0.09);
+    if (last[1] === END) g.setTargetAtTime(0, T(last[0]) + (T(END) - T(last[0])) * 0.45, 0.25);
+    g.setTargetAtTime(0, T(last[1]) - 0.02, 0.01);
+  };
+  // AY: 4-bit volume, about 3 dB a step, written per frame.
+  const ayAmp = (peak, v) => v <= 0 ? 0 : peak * Math.pow(2, (v - 15) / 2);
+  const ayLevel = (acc, sus) => (g, ph, T, peak) => {
+    for (const [a, e] of ph) {
+      let v = acc, t = T(a);
+      while (t < T(e)) {
+        g.setValueAtTime(ayAmp(peak, v), t);
+        if (v > sus) v--;
+        else if (e === END && t > T(a) + (T(e) - T(a)) * 0.45) v = Math.max(0, v - 1);
+        t += (e === END && v <= sus) ? 4 / 60 : 1 / 60;
+      }
+    }
+    g.setValueAtTime(0, T(ph[ph.length - 1][1]));
+  };
+  // Triangle and wave bass: on or off.
+  const flatLevel = (g, ph, T, peak) => { g.setValueAtTime(peak, T(ph[0][0])); g.setValueAtTime(0, T(ph[ph.length - 1][1])); };
+  // Pure: smooth, a light swell on each note.
+  const pureLevel = (g, ph, T, peak) => {
+    g.setValueAtTime(0, T(ph[0][0]));
+    for (const [a, e] of ph) {
+      g.setTargetAtTime(peak, T(a), 0.012);
+      g.setTargetAtTime(peak * 0.78, T(a) + 0.05, 0.12);
+      if (e === END) g.setTargetAtTime(0, T(a) + (T(e) - T(a)) * 0.45, 0.22);
+    }
+    g.setTargetAtTime(0, T(ph[ph.length - 1][1]) - 0.03, 0.015);
+  };
+
+  // ---------- Drums: one noise channel, a new hit cuts the last ----------
+  // Roll pitches climb through each chip's real noise settings, one step per roll stage.
+  const GB_ROLL = [16384, 21845, 26214, 32768, 43690, 65536];               // 524288 / (r × 2^(s+1))
+  const NES_ROLL = [508, 380, 254, 202, 160, 128].map(p => CPU / p);       // noise period table entries
+  function drumSpec(k, r) {
+    if (sys === "gb") return {
+      kick: [8192, 1], snare: [32768, 2], ghost: [32768, 1], hat: [262144, 1], ohat: [131072, 3, true],
+      roll: [GB_ROLL[r], 1], crash: [16384, 6] }[k];
+    return {
+      kick: [CPU / 1016, 3], snare: [CPU / 160, 6], ghost: [CPU / 160, 2], hat: [CPU / 16, 2], ohat: [CPU / 32, 8, true],
+      roll: [NES_ROLL[r], 3], crash: [CPU / 202, 14] }[k];
+  }
+  function playDrums(bus, t0, beat) {
+    DRUMS.forEach(([b, k, vol, r], i) => {
+      const t = t0 + b * beat, next = i + 1 < DRUMS.length ? t0 + DRUMS[i + 1][0] * beat : t + 2.5;
+      if (sys === "pure") return pureDrum(bus, k, vol, t, next, r);
+      if (sys === "sms" || sys === "coleco") return smsDrum(bus, k, vol, t, next, r);
+      const [rate, step, short] = drumSpec(k, r);
+      const unit = sys === "gb" ? 1 / 64 : 1 / 240;
+      const src = ctx.createBufferSource(), g = ctx.createGain();
+      src.buffer = lfsrBuffer(rate, 2.5, short, sys === "nes");
+      g.gain.setValueAtTime(0, 0);
+      let v = vol, tt = t; const peak = sys === "gb" ? 0.11 : 0.1;
+      while (v > 0 && tt < next) { g.gain.setValueAtTime(lv(peak, v), tt); v--; tt += step * unit; }
+      g.gain.setValueAtTime(0, Math.min(tt, next));
+      src.connect(g); g.connect(bus); src.start(t); src.stop(Math.min(tt, next) + 0.05);
+      run.nodes.push(src);
+    });
+  }
+  function smsDrum(bus, k, vol, t, next, r) {
+    if (sys === "sms" && smsNoiseBass()) return;
+    const [rate, frames] = {
+      kick: [PSG / 2048, 1], snare: [PSG / 1024, 2], ghost: [PSG / 1024, 1], hat: [PSG / 512, 1], ohat: [PSG / 512, 3],
+      roll: [PSG / [2048, 2048, 1024, 1024, 512, 512][r || 0], 1], crash: [PSG / 512, 5] }[k];
+    const src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = sys === "coleco" ? polyBuffer(15, 1, rate, 2.5) : smsNoiseBuffer(rate, 2.5);
+    g.gain.setValueAtTime(0, 0);
+    let a = 15 - vol, tt = t;
+    while (a < 15 && tt < next) { g.gain.setValueAtTime(att(0.13, a), tt); a++; tt += frames / 60; }
+    g.gain.setValueAtTime(0, Math.min(tt, next));
+    src.connect(g); g.connect(bus); src.start(t); src.stop(Math.min(tt, next) + 0.05);
+    run.nodes.push(src);
+  }
+  function pureDrum(bus, k, vol, t, next, r) {
+    const g = ctx.createGain(); g.connect(bus); g.gain.setValueAtTime(0, 0);
+    const amp = vol / 15;
+    if (k === "kick") {
+      const o = ctx.createOscillator(); o.type = "sine";
+      o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+      g.gain.setValueAtTime(0.32 * amp, t); g.gain.setTargetAtTime(0, t + 0.02, 0.05);
+      o.connect(g); o.start(t); o.stop(Math.min(next, t + 0.3)); run.nodes.push(o); return;
+    }
+    const f = ctx.createBiquadFilter(), s = ctx.createBufferSource();
+    s.buffer = whiteBuffer(2.5);
+    const cfg = { snare: ["bandpass", 1900, 0.09, 0.05], ghost: ["bandpass", 1900, 0.09, 0.025],
+      hat: ["highpass", 7500, 0.05, 0.012], ohat: ["highpass", 6500, 0.05, 0.09],
+      roll: ["bandpass", 1500 * Math.pow(1.3, r || 0), 0.1, 0.03], crash: ["highpass", 3800, 0.1, 0.55] }[k];
+    f.type = cfg[0]; f.frequency.value = cfg[1];
+    g.gain.setValueAtTime(cfg[2] * amp, t); g.gain.setTargetAtTime(0, t + 0.005, cfg[3]);
+    s.connect(f); f.connect(g); s.start(t); s.stop(Math.min(next, t + 2.4)); run.nodes.push(s);
+  }
+
+  function tiaVoice(bus, v, peak, t0, beat) {
+    const P = SYS.a2600;
+    for (const [a, e, m] of SCORE[v]) {
+      const r = P.pitch(v, midiHz(m)), ta = t0 + a * beat, te = t0 + e * beat;
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.setPeriodicWave(waves[r.wave]); o.frequency.value = r.hz;
+      g.gain.setValueAtTime(0, 0);
+      let vol = 12;
+      for (let t = ta; t < te; t += 1 / 60) {
+        g.gain.setValueAtTime(lv(peak, vol), t);
+        if (vol > 10) vol--;
+        else if (e === END && t > ta + (te - ta) * 0.45) vol = Math.max(0, vol - 1);
+      }
+      g.gain.setValueAtTime(0, te);
+      o.connect(g); g.connect(bus); o.start(ta); o.stop(te + 0.05); run.nodes.push(o);
+    }
+  }
+  // Generic polynomial-counter noise: width-bit register, feedback bit0 xor bit `tap` into the top.
+  function polyBuffer(width, tap, rate, seconds) {
+    const key = `poly:${width}:${tap}:${Math.round(rate)}`; if (noiseBufs[key]) return noiseBufs[key];
+    const sr = ctx.sampleRate, n = Math.floor(sr * seconds);
+    const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    let reg = 1, acc = 0; const step = rate / sr;
+    for (let i = 0; i < n; i++) {
+      acc += step;
+      while (acc >= 1) { acc -= 1; const fb = (reg ^ (reg >> tap)) & 1; reg = (reg >> 1) | (fb << (width - 1)); }
+      d[i] = (reg & 1) ? 1 : -1;
+    }
+    return (noiseBufs[key] = buf);
+  }
+  // Drums on machines with no spare channel: each hit borrows the bass voice for a few frames
+  // (the bass goes silent through `duck`) and plays noise in its place.
+  function stealDrums(drumBus, duck, t0, beat) {
+    const spec = {
+      c64:   { noise: (k, r) => ({ kick: 6000, snare: 12000, hat: 44000, roll: 9000 * Math.pow(1.25, r), crash: 22000 }[k]), poly: [23, 5] },
+      a800:  { noise: (k, r) => ({ kick: 1800, snare: 7000, hat: 30000, roll: 6000 * Math.pow(1.3, r), crash: 16000 }[k]), poly: [17, 5] },
+      intv:  { noise: (k, r) => AYCLK / (16 * ({ kick: 31, snare: 12, hat: 1, crash: 5 }[k] ?? [20, 16, 12, 9, 6, 4][r])), poly: [17, 3] },
+      a2600: { noise: (k, r) => TIA / (({ kick: 31, snare: 6, hat: 0, crash: 3 }[k] ?? [10, 8, 6, 4, 3, 2][r]) + 1), poly: [9, 4] }
+    }[sys];
+    DRUMS.forEach(([b, k, vol, r], i) => {
+      const t = t0 + b * beat, gap = i + 1 < DRUMS.length ? (DRUMS[i + 1][0] - b) * beat : 1;
+      const frames = { kick: 3, snare: 4, hat: 1, crash: 6, roll: gap < 0.06 ? 1 : 2 }[k];
+      const dur = Math.min(frames / 60, gap);
+      duck.gain.setValueAtTime(0, t); duck.gain.setValueAtTime(1, t + dur);
+      const src = ctx.createBufferSource(), g = ctx.createGain();
+      src.buffer = polyBuffer(spec.poly[0], spec.poly[1], spec.noise(k, r || 0), 0.6);
+      g.gain.setValueAtTime(0, 0);
+      let v = vol;
+      for (let tt = t; tt < t + dur; tt += 1 / 60) { g.gain.setValueAtTime(lv(0.13, v), tt); v = Math.max(0, v - 3); }
+      g.gain.setValueAtTime(0, t + dur);
+      src.connect(g); g.connect(drumBus); src.start(t); src.stop(t + dur + 0.02); run.nodes.push(src);
+      if (k === "kick" && sys === "c64") {   // the SID kick: a pulse swept down after the noise
+        const o = ctx.createOscillator(), og = ctx.createGain();
+        o.setPeriodicWave(waves.p50);
+        o.frequency.setValueAtTime(180, t + 1 / 60); o.frequency.exponentialRampToValueAtTime(55, t + dur);
+        og.gain.setValueAtTime(0, 0); og.gain.setValueAtTime(lv(0.13, vol), t + 1 / 60); og.gain.setValueAtTime(0, t + dur);
+        o.connect(og); og.connect(drumBus); o.start(t); o.stop(t + dur + 0.02); run.nodes.push(o);
+      }
+    });
+  }
+
+  function scheduleRound(t0, beat) {
+    const G = run.gains;
+    if (sys === "chip8") {
+      for (const n of CHIP8) {
+        const t = t0 + Math.round(n.s * beat * 60) / 60;
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.setPeriodicWave(waves.p50); o.frequency.value = 440;
+        g.gain.setValueAtTime(0, 0); g.gain.setValueAtTime(0.12, t); g.gain.setValueAtTime(0, t + n.frames / 60);
+        o.connect(g); g.connect(G.buzz); o.start(t); o.stop(t + n.frames / 60 + 0.05); run.nodes.push(o);
+      }
+      return;
+    }
+    if (sys === "pure") {
+      playVoice(G.lead, "lead", "sine", 0.17, pureLevel, t0, beat);
+      playVoice(G.harm, "harm", "sine", 0.15, pureLevel, t0, beat);
+      playVoice(G.bass, "bass", "sine", 0.3, pureLevel, t0, beat);
+    } else if (sys === "gb") {
+      playVoice(G.lead, "lead", waves.p25, 0.15, gbLevel(11, 6), t0, beat);
+      playVoice(G.harm, "harm", waves.p50, 0.15, gbLevel(10, 7), t0, beat);
+      playVoice(G.bass, "bass", waves.gbWave, 0.22, flatLevel, t0, beat);
+    } else if (SYS[sys].render) {
+      for (const [name, buf] of Object.entries(run.stems)) {
+        const src = ctx.createBufferSource(); src.buffer = buf;
+        let dest = G[name] || run.bus;
+        if (sys === "zx") { const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 6000; lp.connect(run.bus); dest = lp; }
+        src.connect(dest); src.start(t0); run.nodes.push(src);
+      }
+      return;
+    } else if (sys === "sms" || sys === "coleco") {
+      playVoice(G.lead, "lead", waves.p50, 0.13, smsLevel(1, 3), t0, beat);
+      playVoice(G.harm, "harm", waves.p50, 0.13, smsLevel(2, 4), t0, beat);
+      if (sys === "sms" && smsNoiseBass()) playVoice(G.bass, "bass", waves.p16, 0.22, smsLevel(0, 1), t0, beat);
+      else playVoice(G.bass, "bass", waves.p50, 0.16, smsLevel(0, 2), t0, beat);
+    } else if (SYS[sys].steal) {
+      const duck = ctx.createGain(); duck.connect(G.bass);
+      if (sys === "c64") {
+        const sweep = (src, ph, T) => {
+          const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.Q.value = 6;
+          for (const [a] of ph) { f.frequency.setValueAtTime(1700, T(a)); f.frequency.setTargetAtTime(480, T(a), 0.07); }
+          src.connect(f); return f;
+        };
+        playVoice(G.lead, "lead", "sawtooth", 0.075, sidLevel, t0, beat, { pwm: true });
+        playVoice(G.harm, "harm", "sawtooth", 0.1, sidLevel, t0, beat);
+        playVoice(duck, "bass", waves.p50, 0.2, sidLevel, t0, beat, { chain: sweep });
+      } else if (sys === "intv") {
+        playVoice(G.lead, "lead", waves.p50, 0.13, ayLevel(14, 12), t0, beat);
+        playVoice(G.harm, "harm", waves.p50, 0.13, ayLevel(13, 11), t0, beat);
+        playVoice(duck, "bass", waves.aySaw, 0.17, flatLevel, t0, beat);
+      } else if (sys === "a800") {
+        playVoice(G.lead, "lead", waves.p50, 0.13, nesLevel(12, 9), t0, beat);
+        playVoice(G.harm, "harm", waves.p50, 0.13, nesLevel(11, 8), t0, beat);
+        playVoice(duck, "bass", waves.p50, 0.17, nesLevel(13, 11), t0, beat);
+      } else {
+        tiaVoice(G.lead, "lead", 0.13, t0, beat);
+        tiaVoice(duck, "bass", 0.17, t0, beat);
+      }
+      stealDrums(G.drums, duck, t0, beat);
+      return;
+    } else {
+      playVoice(G.lead, "lead", waves.p25, 0.14, nesLevel(12, 9), t0, beat);
+      playVoice(G.harm, "harm", waves.p50, 0.14, nesLevel(11, 8), t0, beat);
+      playVoice(G.bass, "bass", waves.nesTri, 0.27, flatLevel, t0, beat);
+    }
+    playDrums(G.drums, t0, beat);
+  }
+
+  // ---------- Pre-rendered machines: the Spectrum's one-bit engine and the GBA's sample mixer ----------
+  const renderCache = new Map();
+  // Frequency at time t (s from the round's start) for a voice, with glides and vibrato as the
+  // chip machines have them; `bends` false gives vibrato only (the GBA engine has no portamento).
+  function pitchTrack(v, beat, bends) {
+    const notes = SCORE[v], P = SYS[sys];
+    return t => {
+      const b = t / beat, i = notes.findIndex(([a, e]) => b >= a && b < e);
+      if (i < 0) return null;
+      const [a, e, m] = notes[i], f = midiHz(noteOf(v, m)), ta = a * beat, te = e * beat, dur = te - ta;
+      let hz = f;
+      if (v !== "bass" && bends) {
+        const prev = i > 0 && notes[i - 1][1] === a ? midiHz(noteOf(v, notes[i - 1][2])) : f * Math.pow(2, -40 / 1200);
+        const G = i > 0 && notes[i - 1][1] === a ? Math.min(0.04, dur * 0.2) : 0.035;
+        if (t - ta < G) { const u = (t - ta) / G; hz = prev * Math.pow(f / prev, 1 - (1 - u) * (1 - u)); }
+      }
+      if (v !== "bass" && dur >= 0.3) {
+        const last = e === END, depth = last ? 20 : 15, dl = last ? 0.2 : 0.11;
+        if (t - ta > dl) { const w = Math.min(1, (t - ta - dl) / 0.18); hz *= Math.pow(2, depth * w * Math.sin(2 * Math.PI * 5.8 * (t - ta - dl)) / 1200); }
+      }
+      return { hz: P.pitch(v, hz).hz, ta, te, last: e === END };
+    };
+  }
+  function renderZX(beat) {
+    const sr = ctx.sampleRate, len = Math.ceil((END * beat + 0.4) * sr);
+    const buf = ctx.createBuffer(1, len, sr), d = buf.getChannelData(0);
+    const voices = ["lead", "harm", "bass"].filter(v => !muted[v]).map(v => ({
+      v, track: pitchTrack(v, beat, true), phase: 0, pulse: 0, step: 0, width: 0, startOf: -1,
+      wmax: { lead: 5, harm: 4, bass: 7 }[v]
+    }));
+    const hits = muted.drums ? [] : DRUMS.map(([b, k, vol]) => ({ t: b * beat, k, vol,
+      len: { kick: 0.012, snare: 0.016, hat: 0.003, crash: 0.05, roll: 0.0015 + vol * 0.00035 }[k] }));
+    let acc = 0, frameT = -1, bit = 0, kickPhase = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      acc += ZXRATE / sr;
+      // once a frame (50 Hz), the engine reads new pitches and pulse widths
+      if (Math.floor(t * 50) !== frameT) {
+        frameT = Math.floor(t * 50);
+        for (const vo of voices) {
+          const p = vo.track(t);
+          if (!p) { vo.width = 0; continue; }
+          vo.step = Math.round(p.hz * 65536 / ZXRATE);
+          let w = vo.wmax;
+          if (p.last) { const u = (t - p.ta) / (p.te - p.ta); if (u > 0.45) w = Math.round(vo.wmax * Math.max(0, 1 - (u - 0.45) / 0.55)); }
+          vo.width = w;
+        }
+      }
+      const hit = hits.find(h => t >= h.t && t < h.t + h.len);
+      while (acc >= 1) {
+        acc -= 1;
+        if (hit) {
+          const u = (t - hit.t) / hit.len;
+          if (hit.k === "kick") { kickPhase += 1 / (18 + 60 * u); bit = (Math.floor(kickPhase) & 1); }
+          else bit = Math.random() < (hit.k === "crash" ? 0.5 * (1 - u) : 0.5) ? 1 : 0;
+          continue;   // interrupting drums: the tone loop is stopped
+        }
+        bit = 0;
+        for (const vo of voices) {
+          if (!vo.width) continue;
+          vo.phase += vo.step;
+          if (vo.phase >= 65536) { vo.phase -= 65536; vo.pulse = vo.width; }
+          if (vo.pulse > 0) { bit = 1; vo.pulse--; }
+        }
+      }
+      d[i] = bit ? 0.16 : -0.16;
+    }
+    // remove the DC a one-bit signal carries
+    let mean = 0; for (let i = 0; i < len; i++) mean += d[i]; mean /= len;
+    for (let i = 0; i < len; i++) d[i] -= mean;
+    return Promise.resolve({ mix: buf });
+  }
+  // GBA instruments as 8-bit-era samples at 13379 Hz
+  let gbaSamples = null;
+  function gbaKit() {
+    if (gbaSamples) return gbaSamples;
+    const mk = (n, fn) => { const b = ctx.createBuffer(1, n, GBARATE), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = fn(i, n); return b; };
+    const cyc = harmonics => mk(64, i => harmonics.reduce((a, [h, amp]) => a + amp * Math.sin(2 * Math.PI * h * i / 64), 0));
+    let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x3fffffff - 1;
+    let last = 0;
+    gbaSamples = {
+      flute: cyc([[1, 0.8], [2, 0.22], [3, 0.08]]),
+      string: cyc(Array.from({ length: 20 }, (_, k) => [k + 1, 0.55 / (k + 1)])),
+      bass: cyc(Array.from({ length: 10 }, (_, k) => [k + 1, 0.7 / Math.pow(k + 1, 1.4)])),
+      kick: mk(3300, (i) => { const t = i / GBARATE; return 0.9 * Math.sin(2 * Math.PI * (45 * t + 75 * (1 - Math.exp(-t * 30)) / 30)) * Math.exp(-t * 14); }),
+      snare: mk(2400, (i) => { const t = i / GBARATE; return (0.6 * rnd() + 0.35 * Math.sin(2 * Math.PI * 185 * t)) * Math.exp(-t * 22); }),
+      hat: mk(700, (i) => { const x = rnd(), y = x - last; last = x; return 0.5 * y * Math.exp(-i / 140); }),
+      crash: mk(16000, (i) => { const x = rnd(), y = x - last; last = x; return 0.45 * y * Math.exp(-i / 5200); })
+    };
+    return gbaSamples;
+  }
+  function renderGBA(beat) {
+    const K = gbaKit(), dur = END * beat + 1.2, n = Math.ceil(dur * GBARATE);
+    const off = new OfflineAudioContext(4, n, GBARATE), merger = off.createChannelMerger(4);
+    merger.connect(off.destination);
+    const stemNames = ["lead", "harm", "bass", "drums"];
+    const stemIn = stemNames.map((_, ch) => {
+      const g = off.createGain(), wet = off.createGain(), dl = off.createDelay(0.2), fb = off.createGain();
+      dl.delayTime.value = 0.067; fb.gain.value = 0.34; wet.gain.value = 0.28;   // the engine's reverb
+      g.connect(merger, 0, ch); g.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(merger, 0, ch);
+      return g;
+    });
+    const inst = {
+      lead: { buf: K.flute, peak: 0.34, a: 0.03, sus: 0.85, rel: 0.09, layers: [0] },
+      harm: { buf: K.string, peak: 0.16, a: 0.05, sus: 0.9, rel: 0.12, layers: [-7, 7] },
+      bass: { buf: K.bass, peak: 0.4, a: 0.004, sus: 0.55, rel: 0.05, layers: [0] }
+    };
+    ["lead", "harm", "bass"].forEach((v, ch) => {
+      const I = inst[v], track = pitchTrack(v, beat, false);
+      for (const [a, e, m] of SCORE[v]) {
+        const ta = a * beat, te = e * beat;
+        for (const det of I.layers) {
+          const src = off.createBufferSource(), g = off.createGain();
+          src.buffer = I.buf; src.loop = true;
+          for (let t = ta; t < te; t += 1 / 60) {
+            const p = track(t + 1e-6); if (!p) break;
+            src.playbackRate.setValueAtTime(p.hz * Math.pow(2, det / 1200) / GBABASE, t);
+          }
+          const pk = I.peak / I.layers.length;
+          g.gain.setValueAtTime(0, ta); g.gain.linearRampToValueAtTime(pk, ta + I.a);
+          g.gain.setTargetAtTime(pk * I.sus, ta + I.a, 0.12);
+          if (e === END) g.gain.setTargetAtTime(0, ta + (te - ta) * 0.45, 0.3);
+          g.gain.setTargetAtTime(0, te, I.rel / 3);
+          src.connect(g); g.connect(stemIn[ch]); src.start(ta); src.stop(te + I.rel * 2);
+        }
+      }
+    });
+    DRUMS.forEach(([b, k, vol, r]) => {
+      const t = b * beat, src = off.createBufferSource(), g = off.createGain();
+      src.buffer = k === "roll" ? K.snare : K[k];
+      if (k === "roll") src.playbackRate.value = 1 + 0.05 * (r || 0);    // the roll tightens as it rises
+      g.gain.value = 0.55 * vol / 15;
+      src.connect(g); g.connect(stemIn[3]); src.start(t);
+    });
+    return off.startRendering().then(out => {
+      // the mixer's 8-bit output, then held (not smoothed) up to the playback rate
+      const sr = ctx.sampleRate, len = Math.ceil(dur * sr), stems = {};
+      stemNames.forEach((name, ch) => {
+        const src = out.getChannelData(ch), b = ctx.createBuffer(1, len, sr), d = b.getChannelData(0);
+        for (let i = 0; i < len; i++) {
+          const x = src[Math.min(n - 1, Math.floor(i * GBARATE / sr))];
+          d[i] = Math.round(Math.max(-1, Math.min(1, x)) * 127) / 127;
+        }
+        stems[name] = b;
+      });
+      return stems;
+    });
+  }
+  function rendered(beat) {
+    const key = [sys, beat, bassEnd, sys === "zx" ? JSON.stringify(muted) : ""].join("|");
+    if (!renderCache.has(key)) renderCache.set(key, sys === "zx" ? renderZX(beat) : renderGBA(beat));
+    return renderCache.get(key);
+  }
+
+  // ---------- Runs and looping ----------
+  function startRun() {
+    ensureAudio();
+    const bus = ctx.createGain(); bus.connect(master);
+    const gains = {};
+    for (const v of ["lead", "harm", "bass", "drums", "buzz"]) {
+      gains[v] = ctx.createGain(); gains[v].gain.value = muted[v] ? 0 : 1; gains[v].connect(bus);
+    }
+    run = { bus, gains, nodes: [], iters: [], timer: 0 };
+    const lead = document.getElementById("leadin").checked ? 1.5 : 0;
+    setPlaying(true);
+    if (SYS[sys].render) {
+      const r = run, beat = 60 / Number(document.getElementById("tempo").value);
+      r.fixedBeat = beat;
+      rendered(beat).then(stems => { if (run !== r) return; r.stems = stems; queue(ctx.currentTime + 0.08 + lead); });
+      return;
+    }
+    queue(ctx.currentTime + 0.08 + lead);
+  }
+  function queue(t0) {
+    const beat = run.fixedBeat || 60 / Number(document.getElementById("tempo").value);
+    scheduleRound(t0, beat);
+    run.iters.push({ t0, beat });
+    const end = t0 + LOOP_BEATS * beat, r = run;
+    r.timer = setTimeout(() => {
+      if (run !== r) return;
+      if (document.getElementById("loop").checked) queue(end);
+      else r.timer = setTimeout(() => { if (run === r) stopRun(); }, 400);
+    }, Math.max(0, (end - ctx.currentTime - 0.4) * 1000));
+  }
+  function stopRun() {
+    if (!run) return;
+    const r = run; run = null;
+    clearTimeout(r.timer);
+    r.bus.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+    setTimeout(() => { r.nodes.forEach(n => { try { n.stop(); } catch (e) {} }); r.bus.disconnect(); }, 200);
+    setPlaying(false);
+  }
+
+  const playBtn = document.getElementById("play");
+  function setPlaying(on) {
+    document.getElementById("playText").textContent = on ? "Stop" : "Play the chime";
+    playBtn.setAttribute("aria-label", on ? "Stop" : "Play the chime");
+    document.getElementById("playIcon").innerHTML = on
+      ? '<rect x="3" y="3" width="10" height="10" fill="currentColor"/>'
+      : '<path d="M3 1.5v13l11-6.5z" fill="currentColor"/>';
+  }
+  playBtn.addEventListener("click", () => run ? stopRun() : startRun());
+  document.addEventListener("keydown", e => {
+    if (e.code !== "Space") return;
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "button" || tag === "input") return;
+    e.preventDefault(); run ? stopRun() : startRun();
+  });
+  document.querySelectorAll(".seg button[data-sys]").forEach(b => b.addEventListener("click", () => {
+    const was = !!run; if (run) stopRun();
+    sys = b.dataset.sys;
+    document.querySelectorAll(".seg button[data-sys]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    buildVoices(); buildRoll();
+    if (was) setTimeout(startRun, 60);
+  }));
+  const tempo = document.getElementById("tempo");
+  tempo.addEventListener("input", () => { document.getElementById("tempoOut").textContent = tempo.value + " bpm"; });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", buildRoll);
+
+  // ---------- The display: 64 × 32, the CHIP-8 screen ----------
+  const S = 12, cv = document.getElementById("scr"), g2 = cv.getContext("2d");
+  const C = 15.5;
+  const segMap = new Int8Array(1024).fill(-1);
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+    const dx = x - C, dy = y - C, r = Math.hypot(dx, dy);
+    if (r >= 12.2 && r <= 15.6) {
+      const a = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360, a2 = (a + 22.5) % 45;
+      if (a2 > 4 && a2 < 41) segMap[y * 32 + x] = Math.floor(((a + 22.5) % 360) / 45);
+    }
+  }
+  const dseg = (px, py, ax, ay, bx, by) => {
+    const vx = bx - ax, vy = by - ay;
+    const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)));
+    return Math.hypot(px - ax - t * vx, py - ay - t * vy);
+  };
+  // The emblem: four capital lambdas folding inward, their eight legs aimed at the ring's eight gaps.
+  // p in [0, 1] grows the legs out from each apex, so the flake crystallises from the core.
+  const emblemCache = new Map();
+  function emblem(p) {
+    const key = Math.round(p * 40); if (emblemCache.has(key)) return emblemCache.get(key);
+    const q = key / 40, map = new Uint8Array(1024);   // 1 = lambda, 2 = core
+    const apex = 3.6, reach = 10.6, spread = 4.39;
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+      const dx = x - C, dy = y - C;
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 1) { map[y * 32 + x] = 2; continue; }
+      if (q <= 0) continue;
+      for (let k = 0; k < 4; k++) {
+        const ang = k * Math.PI / 2, ca = Math.cos(ang), sa = Math.sin(ang);
+        const rx = dx * ca + dy * sa, ry = -dx * sa + dy * ca;
+        const ey = -(apex + (reach - apex) * q), ex = spread * q;
+        if (dseg(rx, ry, 0, -apex, -ex, ey) < 0.95 || dseg(rx, ry, 0, -apex, ex, ey) < 0.95) { map[y * 32 + x] = 1; break; }
+      }
+    }
+    emblemCache.set(key, map); return map;
+  }
+  const FONT = {
+    R: ["11110","10001","10001","11110","10100","10010","10001"],
+    O: ["01110","10001","10001","10001","10001","10001","01110"],
+    T: ["11111","00100","00100","00100","00100","00100","00100"],
+    A: ["01110","10001","10001","11111","10001","10001","10001"]
+  };
+  const wordPix = [];
+  "ROTA".split("").forEach((ch, k) => FONT[ch].forEach((row, y) =>
+    [...row].forEach((b, x) => { if (b === "1") wordPix.push([37 + k * 6 + x, 12 + y]); })));
+  // Spanning layout: bold 6 × 11 letters, R and O left of the emblem, T and A right of it.
+  const BIG = {
+    R: ["11111.","11..11","11..11","11..11","11111.","1111..","11.11.","11..11","11..11","11..11","11..11"],
+    O: [".1111.","11..11","11..11","11..11","11..11","11..11","11..11","11..11","11..11","11..11",".1111."],
+    T: ["111111","111111","..11..","..11..","..11..","..11..","..11..","..11..","..11..","..11..","..11.."],
+    A: [".1111.","11..11","11..11","11..11","11..11","111111","11..11","11..11","11..11","11..11","11..11"]
+  };
+  const spanPix = [];
+  [["R", 1], ["O", 9], ["T", 49], ["A", 57]].forEach(([ch, x0]) => BIG[ch].forEach((row, y) =>
+    [...row].forEach((b, x) => { if (b === "1") spanPix.push([x0 + x, 10 + y]); })));
+
+  // Silk threads: three slow sine paths across the full width, passing behind the emblem's disc.
+  // One thread per voice, in that voice's colour. Each spins out across the screen while its voice
+  // states the figure, and flips over (its wave inverts) when its voice states the inversion.
+  const THREADS = [
+    { v: "lead", A: 7.5, L: 70, ph: 0.0, w: 0.55, cy: 15.5, start: 0, inv: 3 },
+    { v: "harm", A: 10, L: 96, ph: 2.2, w: -0.38, cy: 15.5, start: 1, inv: 4 },
+    { v: "bass", A: 5, L: 52, ph: 4.1, w: 0.8, cy: 16, start: 2, inv: null }
+  ];
+  const TRAVEL = 1.5;
+  let layout = "span";
+  document.getElementById("tw").addEventListener("input", e => {
+    document.getElementById("twOut").textContent = e.target.value + " px";
+  });
+  document.querySelectorAll("[data-layout]").forEach(b => b.addEventListener("click", () => {
+    layout = b.dataset.layout;
+    document.querySelectorAll("[data-layout]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  }));
+
+  // How each machine renders the same logo. The Master System's 6-bit palette (2 bits a channel)
+  // has no Zig amber, so it takes its nearest: orange FFAA00 and teal 00AAAA.
+  // On CHIP-8 everything is one bit, and the threads are XOR-drawn as DXYN draws sprites,
+  // so where a thread crosses a letter the pixels flip.
+  const STYLE = {
+    pure:  { off: "rgba(60,199,185,0.16)", built: "#3CC7B9", head: "#F4ECD8", t1: "rgba(60,199,185,0.85)", t2: "rgba(60,199,185,0.5)", idle: "rgba(60,199,185,0.3)", lam: "#F7A41D", core: "#F4ECD8", word: "#F4ECD8", wordOff: "rgba(244,236,216,0.1)", threads: { lead: "rgba(247,164,29,0.6)", harm: "rgba(60,199,185,0.6)", bass: "rgba(156,143,208,0.6)" } },
+    chip8: { dip: null, off: null, built: "#F7A41D", head: "#F7A41D", t1: null, t2: null, idle: null, lam: "#F7A41D", core: "#F7A41D", word: "#F7A41D", wordOff: null, threads: { lead: "#F7A41D", harm: "#F7A41D", bass: "#F7A41D" } },
+    gb:    { dip: null, off: null, built: "#22A699", head: "#F4ECD8", t1: "#F7A41D", t2: "#22A699", idle: "#22A699", lam: "#F7A41D", core: "#F4ECD8", word: "#F4ECD8", wordOff: null, threads: { lead: "#F7A41D", harm: "#22A699", bass: "#F4ECD8" } },
+    nes:   { off: "#453A62", built: "#22A699", head: "#B8F2EA", t1: "#3CC7B9", t2: "#1B6F67", idle: "#453A62", lam: "#F7A41D", core: "#B8F2EA", word: "#F4ECD8", wordOff: "#2A2340", threads: { lead: "#B07A16", harm: "#1B8F84", bass: "#6A5AA8" } },
+    c64:   { bg: "#352879", dip: "#352879", off: "#6C5EB5", built: "#70A4B2", head: "#FFFFFF", t1: "#70A4B2", t2: "#6C5EB5", idle: "#6C5EB5", lam: "#B8C76F", core: "#FFFFFF", word: "#6C5EB5", wordOff: "#433A8F", threads: { lead: "#B8C76F", harm: "#70A4B2", bass: "#6F3D86" } },
+    a800:  { bg: "#0E0B14", off: "#3B2E5A", built: "#2CB5A8", head: "#E8F8F0", t1: "#2CB5A8", t2: "#1E7A72", idle: "#3B2E5A", lam: "#F2A23A", core: "#E8F8F0", word: "#F2A23A", wordOff: "#2A2340", wordGrad: true, threads: { lead: "#C78A2C", harm: "#22A699", bass: "#7A68B8" } },
+    a2600: { bg: "#000000", dip: null, off: null, built: "#fff", head: "#fff", t1: null, t2: null, idle: null, lam: "#fff", core: "#fff", word: "#fff", wordOff: null, noThreads: true, threads: {} },
+    coleco: { bg: "#000000", dip: "#000000", off: "#5455ED", built: "#42EBF5", head: "#FFFFFF", t1: "#42EBF5", t2: "#5455ED", idle: "#5455ED", lam: "#D4C154", core: "#FFFFFF", word: "#FFFFFF", wordOff: "#5455ED", clash: [8, 1], threads: { lead: "#D4C154", harm: "#21C842", bass: "#C95BBA" } },
+    intv:  { bg: "#0C0005", dip: "#0C0005", off: "#386B3F", built: "#24B8FF", head: "#FFFCFF", t1: "#24B8FF", t2: "#002DFF", idle: "#386B3F", lam: "#FFB41F", core: "#FFFCFF", word: "#C9CFAB", wordOff: "#386B3F", clash: [8, 8], threads: { lead: "#FFB41F", harm: "#00A756", bass: "#A496FF" } },
+    zx:    { bg: "#000000", dip: "#000000", off: "#0000D7", built: "#00D7D7", head: "#FFFFFF", t1: "#00D7D7", t2: "#0000D7", idle: "#0000D7", lam: "#FFFF00", core: "#FFFFFF", word: "#D7D7D7", wordOff: "#0000D7", clash: [8, 8], threads: { lead: "#D7D700", harm: "#00D700", bass: "#D700D7" } },
+    gba:   { off: "rgba(60,199,185,0.16)", built: "#3CC7B9", head: "#F4ECD8", t1: "rgba(60,199,185,0.85)", t2: "rgba(60,199,185,0.5)", idle: "rgba(60,199,185,0.3)", lam: "#F7A41D", core: "#F4ECD8", word: "#F4ECD8", wordOff: "rgba(244,236,216,0.1)", mosaic: true, threads: { lead: "rgba(247,164,29,0.5)", harm: "rgba(60,199,185,0.5)", bass: "rgba(156,143,208,0.5)" } },
+    sms:   { off: "#000055", built: "#00AAAA", head: "#FFFFAA", t1: "#55AAAA", t2: "#005555", idle: "#000055", lam: "#FFAA00", core: "#FFFFAA", word: "#FFFFAA", wordOff: "#000055", threads: { lead: "#AA5500", harm: "#005555", bass: "#5555AA" } }
+  };
+
+  function position() {
+    if (!run) return null;
+    const now = ctx.currentTime;
+    let it = null; for (const i of run.iters) if (i.t0 <= now) it = i;
+    if (!it) return { leadin: true };
+    return { b: (now - it.t0) / it.beat };
+  }
+
+  function draw() {
+    const pos = position(), sty = STYLE[sys];
+    g2.fillStyle = sty.bg || css("--screen") || "#0E0B14";
+    g2.fillRect(0, 0, cv.width, cv.height);
+    const px = (x, y, col) => { if (!col) return; g2.fillStyle = col; g2.fillRect(x * S + 1, y * S + 1, S - 2, S - 2); };
+    let mode = "rest", b = 0;
+    if (pos && pos.leadin) mode = "leadin";
+    else if (pos) { b = pos.b; mode = b < LAST ? "build" : b < END ? "full" : "idle"; }
+    const tok = Math.floor((b - END) * 2) % 8;
+    // Segments light top-down from both sides: the top one, then pairs, then the bottom one,
+    // one stage a beat, so the ring is whole as the roll starts; all flash on the crash.
+    const stage = k => Math.min(k, 8 - k);
+    const segCol = k => {
+      if (mode === "rest") return sty.built;
+      if (mode === "leadin") return sty.off;
+      if (mode === "build") {
+        if (stage(k) > Math.floor(b)) return sty.off;
+        // beats 5 and 6, until the lambdas grow: odd and even segments take turns dipping,
+        // one swap per roll hit, so the flicker speeds up with the roll
+        if (b >= ROLL && b < GROW) {
+          let h = -1; for (let j = 0; j < ROLL_HITS.length && ROLL_HITS[j] <= b; j++) h = j;
+          if (h >= 0) {
+            const len = (ROLL_HITS[h + 1] ?? GROW) - ROLL_HITS[h];
+            if (k % 2 === h % 2 && b - ROLL_HITS[h] < len * 0.6) return "dip" in sty ? sty.dip : (sty.t2 || sty.off);
+          }
+        }
+        return sty.built;
+      }
+      if (mode === "full") {
+        const f = b - LAST;
+        // two flickers on the crash: bright, dark, bright, dark, then lit for good
+        if (f < 0.5) {
+          const bright = Math.floor(f / 0.125) % 2 === 0;
+          if (bright) return sty.head;
+          return "dip" in sty ? sty.dip : (sty.off || null);
+        }
+        return sty.built;
+      }
+      if (sys === "chip8") return k === tok ? sty.built : null;
+      const d = (tok - k + 8) % 8;
+      return d === 0 ? sty.head : d === 1 ? sty.t1 : d === 2 ? sty.t2 : sty.idle;
+    };
+    let p = 1;
+    if (mode === "leadin") p = -1;
+    else if (mode === "build") {
+      // the lambdas burst out in the second half of beat 6, whole on the crash
+      const u = Math.max(0, Math.min(1, (b - GROW) / (LAST - GROW)));
+      p = 1 - (1 - u) * (1 - u);
+    }
+    const em = p >= 0 ? emblem(p) : null;
+    const coreOn = true;
+    const ox = layout === "span" ? 16 : 0;
+    const buf = new Array(64 * 32).fill(null), bits = new Uint8Array(64 * 32);
+    const one = sys === "chip8" || sys === "a2600";
+    const tnow = performance.now() / 1000;
+    // a hue between amber (40°) and teal (175°) that moves down the screen, quantised like a palette
+    const rowHue = (y, steps) => {
+      const u = 0.5 + 0.5 * Math.sin(y * 0.33 - tnow * 1.6);
+      return Math.round((40 + 135 * u) / (135 / steps)) * (135 / steps);
+    };
+    const rowColor = y => `hsl(${rowHue(y, 6)}, 78%, 58%)`;
+    const put = (x, y, col, xor) => {
+      if (x < 0 || x > 63 || y < 0 || y > 31) return;
+      const i = y * 64 + x;
+      if (one) { if (!col) return; bits[i] = xor ? bits[i] ^ 1 : 1; }
+      else if (col) buf[i] = col;
+    };
+    // letters first, so CHIP-8's XOR threads flip them
+    const wordOn = mode === "rest" || mode === "idle" || (mode === "full" && b >= LAST + 0.4);
+    const wc = wordOn ? sty.word : sty.wordOff;
+    const wcol = y => (sty.wordGrad && wordOn) ? `hsl(${rowHue(y, 12)}, 72%, ${54 + (y % 2) * 6}%)` : wc;
+    if (layout === "span") for (const [x, y] of spanPix) put(x, y, wcol(y));
+    else for (const [x, y] of wordPix) put(x, y, wcol(y));
+    // threads: spun in from the left while the ring builds, then always flowing
+    if (document.getElementById("threads").checked && mode !== "leadin" && !sty.noThreads) {
+      const tf = performance.now() / 1000;
+      const tw = Number(document.getElementById("tw").value), half = Math.floor((tw - 1) / 2);
+      const disc = (x, y) => Math.hypot(x - (ox + C), y - C) < 16.4;
+      for (const th of THREADS) {
+        if (muted[th.v] && sys !== "chip8") continue;
+        const reveal = mode === "build" ? Math.round(64 * Math.max(0, Math.min(1, (b - th.start) / TRAVEL))) : 64;
+        if (reveal <= 0) continue;
+        let flip = 1;
+        if (th.inv != null) {
+          const u = mode === "rest" ? 1 : Math.max(0, Math.min(1, (b - th.inv) / 0.5));
+          flip = Math.cos(Math.PI * u);
+        }
+        const yAt = x => th.cy + flip * th.A * Math.sin(2 * Math.PI * x / th.L + th.ph + th.w * tf);
+        const col = sty.threads[th.v];
+        for (let x = 0; x < reveal; x++) {
+          const y0 = Math.round(yAt(x)), y1 = Math.round(yAt(x + 1));
+          const lo = Math.min(y0, y1) - half, hi = Math.max(lo, Math.max(y0, y1) - 1 - half) + tw - 1;
+          let c = (reveal < 64 && x >= reveal - 2) ? sty.head : col;   // bright head while it travels
+          if (th.v === "bass" && bassEnd === "figure" && pos && !pos.leadin && b >= 5 && b < LAST) {
+            const hx = Math.floor(64 * (b - 5) / (LAST - 5));             // the figure again: a pulse runs along
+            if (x >= hx - 3 && x <= hx) c = sty.head;
+          }
+          for (let y = lo; y <= hi; y++) {
+            if (disc(x, y)) continue;
+            if (one) put(x, y, c, true);
+            else if (buf[y * 64 + x] == null) put(x, y, c);   // behind the letters and earlier threads
+          }
+        }
+      }
+    }
+    // ring and emblem on top
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+      const i = y * 32 + x, k = segMap[i];
+      let col = null;
+      if (k >= 0) col = segCol(k);
+      else if (em && em[i] === 1) col = sty.lam;
+      else if (em && em[i] === 2) col = coreOn ? sty.core : null;
+      if (col) put(x + ox, y, col);
+    }
+    if (!one && sty.clash) {
+      // colour clash: each cell keeps one ink colour, the one most of its lit pixels want
+      const [cw, ch] = sty.clash;
+      for (let cy = 0; cy < 32; cy += ch) for (let cx = 0; cx < 64; cx += cw) {
+        const count = new Map();
+        for (let y = cy; y < cy + ch; y++) for (let x = cx; x < cx + cw; x++) { const c = buf[y * 64 + x]; if (c) count.set(c, (count.get(c) || 0) + 1); }
+        if (count.size < 2) continue;
+        let best = null, bn = 0; for (const [c, n] of count) if (n > bn) { best = c; bn = n; }
+        for (let y = cy; y < cy + ch; y++) for (let x = cx; x < cx + cw; x++) if (buf[y * 64 + x]) buf[y * 64 + x] = best;
+      }
+    }
+    if (!one && sty.mosaic && mode === "build" && b < 1) {
+      // the GBA's mosaic effect, clearing over the first beat
+      const m = 1 + Math.floor((1 - b) * 5), src = buf.slice();
+      for (let y = 0; y < 32; y++) for (let x = 0; x < 64; x++) buf[y * 64 + x] = src[(y - y % m) * 64 + (x - x % m)];
+    }
+    // the Spectrum's border: loading stripes in the lead-in, a flash on each drum hit
+    const scr = cv.parentElement;
+    let border = "";
+    if (sys === "zx" && run) {
+      const stripes = (c1, c2, h) => `repeating-linear-gradient(0deg, ${c1} 0 ${h}px, ${c2} ${h}px ${2 * h}px) 0 ${Math.random() * 40}px / 100% ${4 * h}px`;
+      if (mode === "leadin") border = stripes("#D70000", "#00D7D7", 9);
+      else if (pos && !pos.leadin && b < END && DRUMS.some(([db, k]) => b >= db && b < db + (k === "crash" ? 0.5 : 0.12))) border = stripes("#0000D7", "#D7D700", 3);
+      else border = "#000000";
+    }
+    if (scr.style.background !== border) scr.style.background = border;
+    for (let i = 0; i < 2048; i++) {
+      const col = one ? (bits[i] ? (sys === "a2600" ? rowColor(Math.floor(i / 64)) : sty.lam) : null) : buf[i];
+      if (col) px(i % 64, Math.floor(i / 64), col);
+    }
+
+    let msg = "Press Play, or the space bar.";
+    if (mode === "leadin") msg = "Lead-in: waiting for the monitor to lock on.";
+    else if (mode === "build" || (mode === "full" && b < LAST + 1)) { const bi = Math.min(LAST, Math.floor(b)); msg = `Beat ${bi + 1} of ${CHORDS.length}: ${CHORDS[bi][0]} (${CHORDS[bi][1]})` + (bi === LAST ? ", the crash" : ""); }
+    else if (mode === "full") msg = "Final chord: the ring flashes, the flake is whole.";
+    else if (mode === "idle") msg = "Idle: the ring counter turns while the board waits for a key.";
+    const st = document.getElementById("status"); if (st.textContent !== msg) st.textContent = msg;
+    if (playhead) {
+      const show = pos && !pos.leadin && b <= END;
+      playhead.setAttribute("visibility", show ? "visible" : "hidden");
+      if (show) { const x = GUT + b * UNIT; playhead.setAttribute("x1", x); playhead.setAttribute("x2", x); }
+    }
+    let ro = "";
+    if (pos && !pos.leadin && b < END && sys !== "chip8") {
+      const P = SYS[sys];
+      for (const l of LANES.slice(0, 3)) {
+        if (l.v === "harm" && P.noHarm) continue;
+        const n = SCORE[l.v].find(([a, e]) => b >= a && b < e);
+        if (n) { const m = noteOf(l.v, n[2]), r = P.pitch(l.v, midiHz(m)); ro += `<span>${l.label} <b>${noteName(m)}</b> ${r.reg}</span>`; }
+      }
+    }
+    const rd = document.getElementById("readout"); if (rd.innerHTML !== ro) rd.innerHTML = ro;
+    requestAnimationFrame(draw);
+  }
+
+  buildVoices(); buildRoll();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

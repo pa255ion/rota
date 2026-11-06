@@ -1,0 +1,287 @@
+cabal-version:      2.4
+name:               a800xl
+version:            0.1.0.0
+synopsis:           Atari 800XL (NTSC) reference model and Clash core
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    A800.Media
+    A800.CasUnit
+    A800.Screen
+    A800.Acid800
+    A800.Palette
+    A800.Mixer
+    A800.Keyboard
+    A800.Picture
+    A800.Pokey
+    A800.Gtia
+    A800.Antic
+    A800.Core
+    A800.CartDdr
+    A800.Display
+    A800.Audio
+    A800.Loader
+    A800.System
+    A800.Top
+    A800.ArtyTop
+    A800.Spec
+    A800.Spec.Machine
+    A800.SpecFast.Antic
+    A800.SpecFast.Gtia
+    A800.SpecFast.Machine
+    A800.SpecFast.Pokey
+    A800.Spec.Antic
+    A800.Spec.Gtia
+    A800.Spec.Pokey
+    A800.Spec.SaveState
+    A800.StateTable
+    A800.StateTap
+    A800.Hooks
+  ghc-options:      -O2
+  build-depends:
+    mos6502,
+    platform,
+    bytestring,
+    containers,
+    vector,
+    JuicyPixels
+
+-- Layer 0 (docs/TESTING.md): media parsers, test hooks and (from step 4.1)
+-- the reference model, on the fetched ROMs (tools/fetch-roms.sh) and our
+-- own regression programs (build/a800xl/asm/, assembled by make a800-asm).
+test-suite a800xl-spec
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  other-modules:
+    A800.TestRoms
+    A800.SpecMedia
+    A800.SpecMachine
+    A800.SpecAntic
+    A800.SpecDisplay
+    A800.SpecPokey
+    A800.SpecLoader
+    A800.SpecRestore
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    a800xl,
+    process,
+    vector,
+    mos6502,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    platform,
+    tasty,
+    tasty-hunit,
+    tasty-golden,
+    tasty-hedgehog,
+    hedgehog
+
+-- Debugging aid: run the reference model and print the last instructions
+-- and the text screen.
+-- cabal run a800-run -- <os.rom> <basic.rom> [cycles] [trace lines] [cart]
+executable a800-run
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Run.hs
+  ghc-options:      -O2 -rtsopts
+  build-depends:
+    a800xl,
+    platform,
+    bytestring
+
+-- Layer 3 (step 4.7): VGA and HDMI goldens from the spec goldens, and the
+-- display path in Clash simulation.
+test-suite a800xl-golden
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Golden.hs
+  other-modules:
+    A800.TestRoms
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -O2
+  build-depends:
+    a800xl,
+    platform,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    JuicyPixels,
+    tasty,
+    tasty-hunit,
+    tasty-golden
+
+-- Block RAM images for make hdl / make sim (step 4.7).
+-- cabal run a800-image -- <os.rom> <basic.rom> <xexload.bin> <dir> [file.xex]
+-- Side track Q: our cassette boot programs as .cas tape images.
+executable a800-cas
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Cas.hs
+  build-depends:
+    a800xl,
+    bytestring
+
+executable a800-image
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          Image.hs
+  build-depends:
+    a800xl,
+    bytestring,
+    filepath
+
+-- Layer 2, side track N (N.5): the save states' hooks in Clash simulation.
+test-suite a800xl-savestate
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          SaveState.hs
+  other-modules:
+    A800.TestRoms
+    A800.LockCore
+    A800.LockState
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M8g" -O2
+  build-depends:
+    a800xl,
+    mos6502,
+    platform,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    process,
+    vector,
+    tasty,
+    tasty-hunit
+
+-- Layer 2 (step 4.5): the Clash units in lockstep with the reference model.
+test-suite a800xl-lockstep
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Lockstep.hs
+  other-modules:
+    A800.TestRoms
+    A800.LockPokey
+    A800.LockGtia
+    A800.LockAntic
+    A800.LockCore
+    A800.LockState
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -M4g" -O2
+  build-depends:
+    a800xl,
+    process,
+    mos6502,
+    bytestring,
+    directory,
+    filepath,
+    vector,
+    tasty,
+    tasty-hunit
+
+-- Side track Q (PLAN.md Q.5): the fast version ("A800.SpecFast", the
+-- desktop emulator's) against the reference model, side by side on the
+-- same inputs: every instruction's cycle count, registers and POKEY level,
+-- every frame's picture and RAM (test/SpecFast.hs; full tier: longer runs
+-- and every Acid800 test).
+test-suite a800xl-specfast
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          SpecFast.hs
+  other-modules:
+    A800.TestRoms
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N4 -M2g" -O2
+  build-depends:
+    a800xl,
+    mos6502,
+    bytestring,
+    vector,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit
+
+-- Side track Q (PLAN.md Q.5): the 800XL (its fast version, A800.SpecFast)
+-- behind a C ABI, for the desktop emulator's Zig front end
+-- (platform/desktop/; make desktop).
+foreign-library a800xl-desktop
+  type:             native-shared
+  default-language: Haskell2010
+  hs-source-dirs:   desktop
+  other-modules:    A800.Desktop
+  ghc-options:      -O2 -Wall
+  build-depends:
+    platform,
+    base,
+    a800xl,
+    bytestring,
+    vector
+
+-- Side track Q: the reference model against its fast version, for speed
+-- and allocation (+RTS -s); app/FastBench.hs.
+executable a800-fast-bench
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          FastBench.hs
+  ghc-options:      -O2 -rtsopts
+  build-depends:
+    a800xl,
+    bytestring

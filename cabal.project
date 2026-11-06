@@ -1,0 +1,17 @@
+-- Multi-package project: the shared platform library plus one package per
+-- emulated system under systems/<name>/.
+packages: platform/
+          cpus/mos6502/
+          cpus/z80/
+          cpus/w65c816/
+          cpus/spc700/
+          cpus/m68k/
+-- demos/: the boot splash's generator (side track J)
+optional-packages: systems/*/*.cabal
+                   demos/*/*.cabal
+
+-- Every dependency comes from the GHC package database provided by
+-- `nix develop` (flake.nix). Never fetch from Hackage.
+active-repositories: :none
+
+tests: True

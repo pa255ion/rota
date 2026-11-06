@@ -1,0 +1,42 @@
+# Save states at layer 4 (side track N, N.10; Makefile ci-savestate-chip8;
+# the Arty's top, which has the hooks): Chip8.StateHooks's link map (the
+# state mode 0x140050, the write window 0x150000 and the read window
+# 0x170000: the table from 0, RAM from 0x2000, the framebuffer from
+# 0x3000; the read-back control 0x140000 for the byte channel).
+#
+# the built-in program running; the menu pauses it, freeze (between two
+# instructions: at once)
+wait 100000
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 2000
+# expected (test/ps/state.hex): the status (frozen, the table's 0x40
+# bytes, version 1); V0 written into the record and read back (5A); a
+# RAM byte ($0300: 77); a framebuffer row (row 0, 8 bytes)
+bytes 0x171F00 00000000
+bytes 0x150004 5A
+bytes 0x170004 00
+bytes 0x152300 77
+bytes 0x172300 00
+bytes 0x153000 1122334455667788
+bytes 0x173000 0000000000000000
+# a state: RAM's $0300 LD VA, $42 then JP $0302; PC $0300 into the record;
+# thaw: the core runs it (as from a state's load)
+bytes 0x152300 6A421302
+bytes 0x150000 0003
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 20000
+# freeze again: VA is 42, PC $0302
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 2000
+bytes 0x17000E 00
+bytes 0x170000 0000
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 1000

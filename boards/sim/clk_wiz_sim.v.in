@@ -1,0 +1,26 @@
+// Simulation stand-in for the Xilinx Clocking Wizard IP that Clash's
+// clockWizard (Platform.Clocks) instantiates. Used only by Verilator
+// (make sim / make lint), never by Vivado.
+//
+// Hand-written (CLAUDE.md rule 4) because the real IP only exists inside
+// Vivado: Clash emits an instance of it plus a Tcl script that creates it,
+// so the generated Verilog alone can't be simulated. The Makefile replaces
+// @MODULE@ with the IP's module name from the system's *.clash.tcl.
+//
+// The output clock is the input clock: the harness drives GCLK at the
+// pixel rate, one tick per pixel. `locked` rises one clock after `reset`
+// is released, like the MMCM's (much later) lock.
+
+`default_nettype none
+module @MODULE@
+    ( input  wire clk_in1
+    , input  wire reset
+    , output wire clk_out1
+    , output reg  locked
+    );
+  initial locked = 1'b0;
+  assign clk_out1 = clk_in1;
+  always @(posedge clk_in1 or posedge reset)
+    if (reset) locked <= 1'b0;
+    else       locked <= 1'b1;
+endmodule

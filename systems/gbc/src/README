@@ -1,0 +1,2 @@
+The Game Boy Color is built from systems/gb/src (Gb.TopCgb); see ../zedboard.mk.
+This directory only exists because `make hdl` passes systems/$(SYSTEM)/src to Clash.

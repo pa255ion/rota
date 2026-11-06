@@ -1,0 +1,7 @@
+# After keys.xex is loaded (Makefile ci-a800xl: tools/ps-load-script.sh,
+# then this): a second for the OS to start it, then A held (key code $3F:
+# byte 7 bit 7 of A800.Loader's key bytes at 0x100000; no modifiers,
+# console keys or joystick). The screen turns colour $7E
+# (test/golden/vga/keys.png).
+wait 1000000
+bytes 1048576 0000000000000080000000

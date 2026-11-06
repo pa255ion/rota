@@ -1,0 +1,141 @@
+cabal-version:      2.4
+name:               platform
+version:            0.1.0.0
+synopsis:           Shared Clash platform layer: clocks, VGA timing, input, LEDs
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    Platform.Domains
+    Platform.Snapshot
+    Platform.Clocks
+    Platform.Video.VgaTiming
+    Platform.Video.Oled
+    Platform.Input.Sync
+    Platform.Input.Debounce
+    Platform.Output.Leds
+    Platform.Sim.Frame
+    Platform.Sim.Oled
+    Platform.Sim.I2c
+    Platform.Sim.Adv7511
+    Platform.Sim.Overlay
+    Platform.Bus.I2c
+    Platform.Video.Adv7511
+    Platform.Video.Adv7511.Table
+    Platform.Video.Ycbcr422
+    Platform.Board.Zedboard
+    Platform.Ps.Link
+    Platform.Features
+    Platform.Ps.FrameInput
+    Platform.Video.Font8x8
+    Platform.Video.TextOverlay
+    Platform.Video.FrameBuffers
+    Platform.Video.Capture
+    Platform.Audio.Spdif
+    Platform.Mem.Axi
+    Platform.Mem.Ddr
+    Platform.Mem.Sim
+    Platform.Video.Tmds
+    Platform.Board.ArtyZ7
+    Platform.Audio.Pwm
+    Platform.Audio.Volume
+    Platform.Speed
+    Platform.SaveState
+    Platform.Video.HdmiPacket
+    Platform.Video.Hdmi
+  build-depends:
+    JuicyPixels,
+    bytestring,
+    containers,
+    vector
+
+test-suite platform-unit
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Main.hs
+  other-modules:
+    Test.Platform.VgaTiming
+    Test.Platform.Features
+    Test.Platform.FrameInput
+    Test.Platform.Capture
+    Test.Platform.Input
+    Test.Platform.Leds
+    Test.Platform.Clocks
+    Test.Platform.Oled
+    Test.Platform.I2c
+    Test.Platform.Adv7511
+    Test.Platform.Ycbcr422
+    Test.Platform.Board
+    Test.Platform.PsLink
+    Test.Platform.Spdif
+    Test.Platform.Ddr
+    Test.Platform.Tmds
+    Test.Platform.Pwm
+    Test.Platform.Volume
+    Test.Platform.Speed
+    Test.Platform.HdmiPacket
+    Test.Platform.Hdmi
+    Test.Platform.Snapshot
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    platform,
+    bytestring,
+    vector,
+    tasty,
+    tasty-hunit,
+    tasty-hedgehog,
+    hedgehog,
+    JuicyPixels,
+    containers

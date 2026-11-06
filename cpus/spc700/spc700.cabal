@@ -1,0 +1,113 @@
+cabal-version:      2.4
+name:               spc700
+version:            0.1.0.0
+synopsis:           Sony SPC700 CPU: cycle-exact reference model (later a Clash core)
+description:
+  The Super Nintendo's sound CPU (M7; docs/systems/snes.md), a package of
+  its own like cpus/w65c816. Knows nothing about the sound module: the
+  caller supplies the bus.
+license:            BSD-2-Clause
+build-type:         Simple
+
+common clash-common
+  default-language: Haskell2010
+  -- Default extensions of the Clash starter project (docs/TOOLCHAIN.md)
+  default-extensions:
+    BangPatterns
+    BinaryLiterals
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    InstanceSigs
+    KindSignatures
+    MagicHash
+    NoStarIsType
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fconstraint-solver-iterations=10
+  build-depends:
+    base,
+    clash-prelude >= 1.8 && < 1.9,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import:           clash-common
+  hs-source-dirs:   src
+  exposed-modules:
+    Spc700.Types
+    Spc700.Spec
+    Spc700.Core
+    Spc700.CoreOoc
+  ghc-options:      -O2
+  build-depends:
+    vector
+
+-- Layer 0 (docs/TESTING.md): the reference model against Tom Harte's
+-- SingleStepTests (tools/fetch-roms.sh, roms/spc700/): final state and the
+-- bus cycles of every test, per opcode file (step 7.2).
+test-suite spc700-spec
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  other-modules:
+    Spc700.SingleStep
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -O2
+  build-depends:
+    spc700,
+    aeson,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit
+
+-- Layer 1 (step 7.8): the Clash core ("Spc700.Core") against
+-- SingleStepTests and in lockstep with the spec on random programs.
+test-suite spc700-core
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Core.hs
+  other-modules:
+    Spc700.SingleStep
+    Spc700.CoreStep
+    Spc700.Lockstep
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -O2
+  build-depends:
+    spc700,
+    aeson,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    tasty,
+    tasty-hunit
