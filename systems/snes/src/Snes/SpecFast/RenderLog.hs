@@ -32,6 +32,11 @@ afresh at the line's start), so the lines can be drawn apart.
 
 Off (0 threads) the machine draws inline as the reference model does, and
 none of this runs.
+
+Exported (side track W, the browser's: -1 threads): no threads here; the
+log is kept for the caller ('rlTake'), with each frame's end marked in it
+('evFrame'), and drawn by a 'Replayer' elsewhere (the page's second Web
+Worker, another core): the same replay on its own copy of the PPU.
 -}
 module Snes.SpecFast.RenderLog
   ( RenderLog
@@ -52,6 +57,13 @@ module Snes.SpecFast.RenderLog
   , rlLastFrame
   , rlSetLag
   , rlReload
+    -- * Exported (the browser's second worker)
+  , rlTake
+  , Replayer
+  , newReplayer
+  , replayerFeed
+  , replayerFrame
+  , replayerLines
   ) where
 
 import Prelude
@@ -63,6 +75,7 @@ import Control.Exception (SomeException, try, throwIO)
 import Control.Monad (when)
 import Control.Monad.ST (ST)
 import Control.Monad.ST.Unsafe (unsafeIOToST, unsafeSTToIO)
+import Data.Bits ((.&.))
 import Data.STRef
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
@@ -85,6 +98,9 @@ data RenderLog s = RenderLog
   , rlDone     :: ![Chan (U.Vector Word16)]        -- ^ each thread's frames at their ends
   , rlEnded    :: !(STRef s Int)                   -- ^ frame ends marked, not yet taken
   , rlLag      :: !(STRef s Bool)                  -- ^ the frames kept at their ends (only then: 'rlSetLag')
+  , rlExport   :: !Bool                            -- ^ exported: batches kept for 'rlTake', no threads
+  , rlOut      :: !(STRef s (MV.MVector s Int))  -- ^ exported: the batches not yet taken
+  , rlOutLen   :: !(STRef s Int)
   }
 
 -- Event codes, then their arguments.
@@ -96,11 +112,15 @@ evObj = 3     -- the line's 256 sprite pixels
 evStart = 4
 evClear = 5
 evDraw = 6    -- line, field, up to
+evFrame :: Int
+evFrame = 7   -- a frame's end (exported logs only)
 
 -- | The log, its @n@ threads started (0: none, inline): each copy of the
 -- PPU starts as the machine's (@vram@, @cg@, @oam@, @regs@, as they are now).
 newRenderLog :: Int -> MV.MVector s Word8 -> MV.MVector s Word8 -> MV.MVector s Word8 -> MV.MVector s Int -> ST s (RenderLog s)
-newRenderLog n vram cg oam regs = do
+newRenderLog n0 vram cg oam regs = do
+  let export = n0 < 0
+      n = max 0 n0
   shadows <- mapM (const $ do
       v <- MV.clone vram
       c <- MV.clone cg
@@ -115,7 +135,9 @@ newRenderLog n vram cg oam regs = do
   dones <- mapM (const (unsafeIOToST newChan)) [1 .. n]
   ended <- newSTRef 0
   lag <- newSTRef False
-  let rl = RenderLog (n > 0) n buf len lns pend chans shadows dones ended lag
+  out <- MV.new (if export then 65536 else 0) >>= newSTRef
+  outLen <- newSTRef 0
+  let rl = RenderLog (n > 0 || export) n buf len lns pend chans shadows dones ended lag export out outLen
   mapM_ (\(k, (ch, dn), sh) -> unsafeIOToST (() <$ forkIO (unsafeSTToIO (worker n k ch dn sh)))) (zip3 [0 ..] (zip chans dones) shadows)
   pure rl
 
@@ -137,7 +159,12 @@ worker n k chan done shadow = go Nothing
         go (either Just (const err) r)
 
 replay :: Int -> Int -> Ppu s -> U.Vector Int -> ST s ()
-replay nThreads k shadow v = loop 0
+replay nThreads k shadow v = replayWith nThreads k shadow (\_ -> pure ()) v
+
+-- | 'replay', with @frameEnd@ called at each frame's end marked in the log
+-- (an exported log's).
+replayWith :: Int -> Int -> Ppu s -> (Int -> ST s ()) -> U.Vector Int -> ST s ()
+replayWith nThreads k shadow frameEnd v = loop 0
  where
   p = shadow
   n = U.length v
@@ -151,10 +178,26 @@ replay nThreads k shadow v = loop 0
         3 -> ppuSetObjLine p (U.slice (i + 1) 256 v) >> loop (i + 257)
         4 -> ppuStartLine p >> loop (i + 1)
         5 -> ppuClearSprites p >> loop (i + 1)
+        7 -> frameEnd (i + 1) >> loop (i + 1)
         _ -> do
           let line = at (i + 1)
           when (line `mod` nThreads == k) $ ppuRenderTo p line (at (i + 2)) (at (i + 3))
           loop (i + 4)
+
+-- (the events' Ints written as they come, no list: the exported log is
+-- written on every register write and line)
+pushN :: RenderLog s -> Int -> (MV.MVector s Int -> Int -> ST s ()) -> ST s ()
+pushN rl k write = do
+  n <- readSTRef (rlLen rl)
+  b0 <- readSTRef (rlBuf rl)
+  b <- if n + k > MV.length b0 then do { b' <- MV.grow b0 (max (MV.length b0) k); writeSTRef (rlBuf rl) b'; pure b' } else pure b0
+  write b n
+  writeSTRef (rlLen rl) (n + k)
+{-# INLINE pushN #-}
+
+push3 :: RenderLog s -> Int -> Int -> Int -> ST s ()
+push3 rl a b c = pushN rl 3 (\v n -> MV.unsafeWrite v n a >> MV.unsafeWrite v (n + 1) b >> MV.unsafeWrite v (n + 2) c)
+{-# INLINE push3 #-}
 
 push :: RenderLog s -> [Int] -> ST s ()
 push rl xs = do
@@ -184,26 +227,26 @@ rlFlush rl = do
     f <- MV.unsafeRead pd 2
     u <- MV.unsafeRead pd 3
     MV.unsafeWrite pd 0 0
-    push rl [evDraw, v, f, u]
+    pushN rl 4 (\b n -> MV.unsafeWrite b n evDraw >> MV.unsafeWrite b (n + 1) v >> MV.unsafeWrite b (n + 2) f >> MV.unsafeWrite b (n + 3) u)
 
 change :: RenderLog s -> [Int] -> ST s ()
 change rl xs = when (rlThreaded rl) (rlFlush rl >> push rl xs)
 
 rlReg :: RenderLog s -> Int -> Int -> ST s ()
-rlReg rl r v = change rl [evReg, r, v]
+rlReg rl r v = when (rlThreaded rl) (rlFlush rl >> push3 rl evReg r v)
 
 rlVram :: RenderLog s -> Int -> Word8 -> ST s ()
-rlVram rl a v = change rl [evVram, a, fromIntegral v]
+rlVram rl a v = when (rlThreaded rl) (rlFlush rl >> push3 rl evVram a (fromIntegral v))
 
 rlCg :: RenderLog s -> Int -> Word8 -> ST s ()
-rlCg rl a v = change rl [evCg, a, fromIntegral v]
+rlCg rl a v = when (rlThreaded rl) (rlFlush rl >> push3 rl evCg a (fromIntegral v))
 
 -- | The line's sprite pixels as the machine's PPU (@cpuPpu@) has them now.
 rlObj :: RenderLog s -> Ppu s -> ST s ()
 rlObj rl cpuPpu = when (rlThreaded rl) $ do
   rlFlush rl
   o <- ppuObjLine cpuPpu
-  push rl (evObj : U.toList o)
+  pushN rl 257 (\b n -> MV.unsafeWrite b n evObj >> U.imapM_ (\i x -> MV.unsafeWrite b (n + 1 + i) x) o)
 
 rlStartLine, rlClearObj :: RenderLog s -> ST s ()
 rlStartLine rl = change rl [evStart]
@@ -230,14 +273,39 @@ send rl = do
   n <- readSTRef (rlLen rl)
   when (n > 0) $ do
     b <- readSTRef (rlBuf rl)
-    v <- U.freeze (MV.slice 0 n b)
     writeSTRef (rlLen rl) 0
-    unsafeIOToST (mapM_ (\ch -> writeChan ch (Batch v)) (rlChans rl))
+    if rlExport rl
+      then outAppend rl (MV.slice 0 n b)
+      else do
+        v <- U.freeze (MV.slice 0 n b)
+        unsafeIOToST (mapM_ (\ch -> writeChan ch (Batch v)) (rlChans rl))
+
+-- | Exported: events onto the batches not yet taken.
+outAppend :: RenderLog s -> MV.MVector s Int -> ST s ()
+outAppend rl src = do
+  let k = MV.length src
+  n <- readSTRef (rlOutLen rl)
+  o0 <- readSTRef (rlOut rl)
+  o <- if n + k > MV.length o0 then do { o' <- MV.grow o0 (max (MV.length o0) k); writeSTRef (rlOut rl) o'; pure o' } else pure o0
+  MV.copy (MV.slice n k o) src
+  writeSTRef (rlOutLen rl) (n + k)
+
+-- | Exported: the log since the last take (frames' ends marked in it), and
+-- the outbox emptied. The vector is valid until the machine runs again.
+rlTake :: RenderLog s -> ST s (U.Vector Int)
+rlTake rl
+  | not (rlExport rl) = pure U.empty
+  | otherwise = do
+      send rl
+      n <- readSTRef (rlOutLen rl)
+      o <- readSTRef (rlOut rl)
+      writeSTRef (rlOutLen rl) 0
+      U.unsafeFreeze (MV.slice 0 n o)
 
 -- | Waits until the thread has drawn everything logged (a failure in it
 -- is raised here).
 rlSync :: RenderLog s -> ST s ()
-rlSync rl = when (rlThreaded rl) $ do
+rlSync rl = when (rlThreaded rl && not (rlExport rl)) $ do
   send rl
   unsafeIOToST $ do
     mvs <- mapM (\ch -> do { mv <- newEmptyMVar; writeChan ch (Sync mv); pure mv }) (rlChans rl)
@@ -245,12 +313,19 @@ rlSync rl = when (rlThreaded rl) $ do
 
 -- | A frame's end (after its last line's log): each thread keeps its rows.
 rlFrameEnd :: RenderLog s -> ST s ()
-rlFrameEnd rl = do
+rlFrameEnd rl
+ | rlExport rl = send rl >> outAppendOne rl evFrame
+ | otherwise = do
  lag <- readSTRef (rlLag rl)
  when (rlThreaded rl && lag) $ do
   send rl
   unsafeIOToST (mapM_ (\ch -> writeChan ch FrameEnd) (rlChans rl))
   modifySTRef' (rlEnded rl) (+ 1)
+
+outAppendOne :: RenderLog s -> Int -> ST s ()
+outAppendOne rl x = do
+  t <- MV.replicate 1 x
+  outAppend rl t
 
 -- | Keep each frame at its end, for 'rlLastFrame' (off by default: kept
 -- frames nobody takes would pile up).
@@ -262,7 +337,7 @@ rlSetLag rl = writeSTRef (rlLag rl)
 -- frames have ended (and when off). The frames in between are dropped.
 rlLastFrame :: RenderLog s -> ST s (Maybe (U.Vector Word16))
 rlLastFrame rl
-  | not (rlThreaded rl) = pure Nothing
+  | not (rlThreaded rl) || rlExport rl = pure Nothing
   | otherwise = do
       e <- readSTRef (rlEnded rl)
       if e < 2 then pure Nothing else do
@@ -281,6 +356,9 @@ assemble n frames =
 -- | The frame buffer: the thread's, after 'rlSync'; @inline@'s when off.
 rlFrame :: RenderLog s -> Ppu s -> ST s (U.Vector Word16)
 rlFrame rl inline
+  -- (exported: the picture is drawn elsewhere; here, what the machine's own
+  -- PPU holds, nothing drawn)
+  | rlExport rl = ppuFrame inline
   | rlThreaded rl = do
       rlSync rl
       frames <- mapM ppuFrame (rlShadows rl)
@@ -292,9 +370,51 @@ rlFrame rl inline
 -- copy of the PPU made the machine's again (@p@, whose VRAM, CGRAM, OAM
 -- and registers are the machine's), the frames kept at their ends dropped.
 rlReload :: RenderLog s -> Ppu s -> ST s ()
-rlReload rl p = when (rlThreaded rl) $ do
+rlReload rl p = when (rlThreaded rl && not (rlExport rl)) $ do
   rlSync rl
   mapM_ (`ppuReload` p) (rlShadows rl)
   e <- readSTRef (rlEnded rl)
   mapM_ (\dn -> unsafeIOToST (mapM_ (const (readChan dn)) [1 .. e])) (rlDone rl)
   writeSTRef (rlEnded rl) 0
+
+-- * The replayer (an exported log's drawing, elsewhere)
+
+-- | A copy of the PPU drawn from an exported log, and the last frame it
+-- finished (its colours and visible lines).
+data Replayer s = Replayer
+  { rpPpu   :: !(Ppu s)
+  , rpFrame :: !(STRef s (U.Vector Word16))
+  , rpLines :: !(STRef s Int)
+  }
+
+-- | A replayer as the machine's PPU is at power-on (all of VRAM, CGRAM,
+-- OAM and the registers 0; the log starts then).
+newReplayer :: ST s (Replayer s)
+newReplayer = do
+  v <- MV.replicate 0x10000 0
+  c <- MV.replicate 512 0
+  o <- MV.replicate 544 0
+  r <- MV.replicate 0x48 0
+  p <- newPpu v c o r
+  Replayer p <$> newSTRef U.empty <*> newSTRef 224
+
+-- | An exported log's events replayed; the frames that ended in it.
+replayerFeed :: Replayer s -> U.Vector Int -> ST s Int
+replayerFeed rp v = do
+  ended <- newSTRef 0
+  let frameEnd _ = do
+        f <- ppuFrame (rpPpu rp)
+        writeSTRef (rpFrame rp) f
+        -- (the visible lines as the machine works them out: SETINI's
+        -- overscan bit)
+        setini <- ppuRegR (rpPpu rp) 0x33
+        writeSTRef (rpLines rp) (if setini .&. 0x04 /= 0 then 239 else 224)
+        modifySTRef' ended (+ 1)
+  replayWith 1 0 (rpPpu rp) frameEnd v
+  readSTRef ended
+
+replayerFrame :: Replayer s -> ST s (U.Vector Word16)
+replayerFrame = readSTRef . rpFrame
+
+replayerLines :: Replayer s -> ST s Int
+replayerLines = readSTRef . rpLines

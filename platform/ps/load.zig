@@ -378,8 +378,9 @@ test "a companion file (M6: the Master System's BIOS): none, a good one into DDR
     const b = try loadCompanion(&row, &fs, &dev, &mem);
     try testing.expect(b == .refused);
     try testing.expectEqual(@as(u32, 0), mem.writes);
-    // every other system has no companion
-    for (menu.systems) |o| if (o.id != 8) try testing.expect(o.companion == null);
+    // every other system has no companion (but the Super Nintendo's, M7
+    // step 7.16d: the DSP-1's firmware, systems/snes_dsp.zig)
+    for (menu.systems) |o| if (o.id != 8 and o.id != 9) try testing.expect(o.companion == null);
 }
 
 test "a companion refused or failing to read leaves the system held; a good one or none too, for the cartridge (side K's review)" {

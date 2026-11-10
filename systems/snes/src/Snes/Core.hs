@@ -48,6 +48,11 @@ module Snes.Core
   , Inflight (..)
   , chainBytes
   , atRest
+    -- * Save states through the CPU (step 7.15: SNES_STATES=cpu)
+  , OvlIn (..)
+  , ovlIdle
+  , atRestCpu
+  , apuChainBytes
   ) where
 
 import Clash.Prelude
@@ -65,7 +70,12 @@ import Snes.Ppu
 import Snes.RomPort
 import Snes.Spec.Gauss (gauss)
 import qualified Spc700.Core as S
-import W65c816.Core (Cpu (..))
+import W65c816.Core (Cpu (..), Phase (..), Stage (..))
+import Snes.StateTap (tableByte)
+#ifdef SNES_DSP1
+import Snes.Dsp1
+import Snes.Upd77c25 (ReqAddrs (..))
+#endif
 
 -- | The boot ROM's image (64 lines of 8 binary digits, @make snes-image@
 -- from build/snes/ipl.bin; the user's own dump in its place, as decided).
@@ -90,6 +100,8 @@ data SnesCore dom = SnesCore
   , scRest     :: Signal dom Bool             -- ^ 'atRest': a freeze may begin
   , scTop      :: Signal dom (BitVector 8)    -- ^ the chain's top byte (frozen)
   , scPortRd   :: Signal dom (BitVector 16)   -- ^ the byte or word the PS's port read last clock
+  , scRestCpu  :: Signal dom Bool             -- ^ 'atRestCpu': the CPU build's freeze may begin
+  , scOvlDone  :: Signal dom Bool             -- ^ the overlay's last instruction ended (the hooks disarm it)
   }
 
 -- * Save states
@@ -104,18 +116,34 @@ data StPort
   | PDma (Index 16) (Index 8) (Maybe (Unsigned 8))   -- ^ a register, its channel
   | PAram (Unsigned 16) (Maybe (Unsigned 8))
   | PSmp (Unsigned 8) (Maybe (Signed 16))
+  | PTable (Unsigned 10)                           -- ^ the state table's byte (read only; step 7.15, the CPU build)
+  | POvl (Unsigned 11) (Maybe (Unsigned 8))        -- ^ the ROM overlay's byte (written; the same)
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFDataX, BitPack)
+
+-- | The ROM overlay of a load through the CPU (step 7.15): armed, its end
+-- address (the routine's last instruction's opcode, bank 00h). The hooks
+-- keep it (outside the core's reset: armed while held, it answers the
+-- reset's vector).
+data OvlIn = OvlIn
+  { oiArmed :: Bool
+  , oiEnd   :: Unsigned 16
+  } deriving stock (Show, Eq, Generic)
+    deriving anyclass NFDataX
+
+ovlIdle :: OvlIn
+ovlIdle = OvlIn False 0
 
 data StCtl = StCtl
   { stFreeze :: Bool                 -- ^ no step, the ports the PS's
   , stShift  :: Maybe (BitVector 8)  -- ^ frozen: the chain shifted a byte, this one in
   , stPort   :: Maybe StPort         -- ^ frozen: a memory's port
+  , stFinish :: Bool                 -- ^ (the CPU build's freeze, its clock before) a step with no master clock: the CPU's instruction finishes, its registers final, the time its end
   } deriving stock (Show, Eq, Generic)
     deriving anyclass NFDataX
 
 stIdle :: StCtl
-stIdle = StCtl False Nothing Nothing
+stIdle = StCtl False Nothing Nothing False
 
 -- | What the memories answer for the addresses of the clock before: the
 -- next step's inputs from them.
@@ -142,9 +170,26 @@ data CoreRegs = CoreRegs
   , crFrame :: Unsigned 2
   , crRd    :: Maybe (Unsigned 23)    -- ^ the bus's ROM read, registered before the ROM port
   , crLatch :: Inflight
-  , crPad   :: BitVector 7
+#ifdef SNES_DSP1
+  , crDsp   :: DspRegs                -- ^ (the DSP-1 build) the cartridge's chip, "Snes.Dsp1"
+#endif
+  , crPad   :: BitVector CorePad
   } deriving stock (Show, Eq, Generic)
     deriving anyclass (NFDataX, BitPack)
+
+-- | The padding that makes the chain whole bytes.
+#ifdef SNES_DSP1
+type CoreRaw = BitSize BusC + BitSize PpuC + BitSize ApuC + BitSize RomPort + 2 + BitSize (Maybe (Unsigned 23)) + BitSize Inflight + BitSize DspRegs
+#else
+type CoreRaw = BitSize BusC + BitSize PpuC + BitSize ApuC + BitSize RomPort + 2 + BitSize (Maybe (Unsigned 23)) + BitSize Inflight
+#endif
+type CorePad = Mod (8 - Mod CoreRaw 8) 8
+
+-- | The CPU build's chain: the sound module's record, padded likewise.
+type ApuPad = Mod (8 - Mod (BitSize ApuC) 8) 8
+
+apuChainBytes :: Int
+apuChainBytes = fromIntegral (natToInteger @(BitSize ApuC + ApuPad)) `div` 8
 
 -- | The chain's length in bytes (the state space's record; a test checks
 -- the padding makes it whole).
@@ -153,7 +198,11 @@ chainBytes = fromIntegral (natToInteger @(BitSize CoreRegs)) `div` 8
 
 coreInit :: CoreRegs
 coreInit = CoreRegs busInit ppuInit apuInit romPortInit 0 Nothing
-  (Inflight 0x55 0 (repeat 0xFF) ppuIdleIn 0 0 0 0 0) 0
+  (Inflight 0x55 0 (repeat 0xFF) ppuIdleIn 0 0 0 0 0)
+#ifdef SNES_DSP1
+  dspInit
+#endif
+  0
 
 -- | A freeze may begin: no ROM read on its way or registered, the ROM
 -- port idle (so no DDR answer is due), the 5A22 not waiting for a read.
@@ -171,6 +220,46 @@ strictRegs :: BitVector (BitSize CoreRegs) -> BitVector (BitSize CoreRegs)
 strictRegs c = deepseqX c c
 #else
 strictRegs = id
+#endif
+
+-- | A register's bits forced each clock in Haskell's simulation (as
+-- 'strictRegs').
+strictBits :: KnownNat n => BitVector n -> BitVector n
+#ifdef SNES_SIM_STRICT
+strictBits b = deepseqX b b
+#else
+strictBits = id
+#endif
+
+-- | A memory's byte with its undefined bits 0 (SNES_SIM_STRICT only, as
+-- 'simDefined': the overlay's, whose block RAM answers undefined before its
+-- first read in Clash's simulation).
+simByte :: Unsigned 8 -> Unsigned 8
+#ifdef SNES_SIM_STRICT
+simByte = fromIntegral . unsafeToNatural . pack
+#else
+simByte = id
+#endif
+
+#ifdef SNES_DSP1
+-- | A word's undefined bits 0 (SNES_SIM_STRICT only, as 'simByte'): the
+-- DSP-1's RAM in Clash's simulation answers undefined before it is
+-- written.
+simWord :: Unsigned 16 -> Unsigned 16
+#ifdef SNES_SIM_STRICT
+simWord = fromIntegral . unsafeToNatural . pack
+#else
+simWord = id
+#endif
+
+-- | The same for the program ROM's 24-bit words (its block RAM answers
+-- undefined before its first read).
+simOp24 :: BitVector 24 -> BitVector 24
+#ifdef SNES_SIM_STRICT
+simOp24 = fromIntegral . unsafeToNatural
+#else
+simOp24 = id
+#endif
 #endif
 
 -- | The memories' bytes in flight with their undefined bits 0, as Verilator
@@ -208,6 +297,19 @@ simOp = id
 tdpRam :: (HiddenClock dom, KnownNat n, NFDataX a) => Signal dom (RamOp n a) -> Signal dom (RamOp n a) -> (Signal dom a, Signal dom a)
 tdpRam a b = trueDualPortBlockRam (simOp <$> a) (simOp <$> b)
 
+-- | The CPU build's freeze: at rest ('atRest'), the CPU at an
+-- instruction's end ('StDone'), not stopped, no DMA owed, the multiplier
+-- and divider idle, the pads' auto-read done, no interrupt seen or owed
+-- ("Snes.Spec.SaveState"'s 'specAtRest'; the hooks add V-blank).
+atRestCpu :: CoreRegs -> Bool
+atRestCpu c =
+  let b = crBus c
+      cpu = bCpu b
+  in atRest c && cStage cpu == StDone && cPhase cpu /= PhStop && bDmaPend b == 0 && bMpyCtr b == 0
+     && bDivCtr b == 0 && bJoyBusy b == 0 && not (cNmiNeed cpu) && cPollCur cpu == 0 && cPollPrev cpu == 0
+
+
+#ifndef SNES_STATES_CPU
 -- | The record's bits shifted a byte: this byte in at the bottom, the top
 -- byte out (with the top byte itself in: a rotation, the read). (On the
 -- bits, not the record: a record between two shifts would drop the bits
@@ -218,6 +320,7 @@ shiftChain b c = (c `shiftL` 8) .|. zeroExtend b
 
 topByte :: BitVector (BitSize CoreRegs) -> BitVector 8
 topByte c = truncateB (c `shiftR` (fromIntegral (natToInteger @(BitSize CoreRegs)) - 8))
+#endif
 
 -- | The machine from the master clock's enable, the cartridge, the pads,
 -- the DDR port's answers, the PS's SRAM op (its second port) and the save
@@ -228,21 +331,28 @@ snesCore
   -> Signal dom (Maybe (Vec 8 (Unsigned 8)))
   -> Signal dom (RamOp 32768 (Unsigned 8))
   -> Signal dom StCtl
+  -> Signal dom OvlIn
   -> SnesCore dom
-snesCore run cfg pads ddrAnswer psSram st = SnesCore
+snesCore run cfg pads ddrAnswer psSram st ovl = SnesCore
   { scPixel = gate (poPixel <$> po)
   , scFrame = crFrame <$> cs
   , scV = bVc . crBus <$> cs
   , scH = bHc . crBus <$> cs
   , scOverscan = (\c -> testBit (bSetini (crBus c)) 2) <$> cs
-  , scSample = gate (aoSample <$> ao)
+  , scSample = (\h v -> if h then Nothing else v) <$> hold <*> gate (aoSample <$> ao)
   , scDdrReq = gate (roRequest <$> ro)
   , scSramPs = sramB
   , scSramWrote = (\f o -> not f && isJust (boSramW o)) <$> frz <*> bo
   , scDebug = (\c -> debugBytes (crBus c) (crApu c)) <$> cs
   , scRest = atRest <$> cs
+#ifdef SNES_STATES_CPU
+  , scTop = (\a -> truncateB (a `shiftR` (fromIntegral (natToInteger @(BitSize ApuC + ApuPad)) - 8))) <$> apuBits
+#else
   , scTop = topByte <$> csBits
+#endif
   , scPortRd = portRd
+  , scRestCpu = atRestCpu <$> cs
+  , scOvlDone = ovlDone
   }
  where
   frz = stFreeze <$> st
@@ -255,20 +365,96 @@ snesCore run cfg pads ddrAnswer psSram st = SnesCore
   port = (\s -> if stFreeze s then stPort s else Nothing) <$> st
   -- the record
   -- (the register holds the record's bits: see 'shiftChain')
+#ifdef SNES_STATES_CPU
+  -- (the CPU build: the sound module's record in a register of its own,
+  -- with its padding; its clock enable is the hold's and the freeze's, so
+  -- the chain's only cost a bit is its shift. The record's register keeps
+  -- the rest; its copy of the sound module's bits goes unused)
+  csBits = register (pack coreInit) (strictRegs <$> csBits')
+  apuBits = regEn (pack apuInit ++# (0 :: BitVector ApuPad)) apuEn (strictBits <$> apuBits')
+  cs = (\b a -> (unpack b) { crApu = unpack (fst (split a :: (BitVector (BitSize ApuC), BitVector ApuPad))) }) <$> csBits <*> apuBits
+  apuEn = (\s h -> if stFreeze s then isJust (stShift s) else not h) <$> st <*> hold
+  apuBits' = (\s a n -> case stShift s of
+                 Just v | stFreeze s -> (a `shiftL` 8) .|. zeroExtend v
+                 _ -> pack (crApu n) ++# snd (split a :: (BitVector (BitSize ApuC), BitVector ApuPad))) <$> st <*> apuBits <*> stepped
+  csBits' = (\s c n cap mi -> if not (stFreeze s) then pack n
+                             else if cap then pack (c { crLatch = mi })
+                             else pack c) <$> st <*> cs <*> stepped <*> capture <*> memIns
+#else
   csBits = register (pack coreInit) (strictRegs <$> csBits')
   cs = unpack <$> csBits
-  csBits' = (\s b c n cap mi -> if not (stFreeze s) then pack n
+  csBits' = (\s b c n cap mi h -> if not (stFreeze s) then pack (holdApu h c n)
                                else if cap then pack (c { crLatch = mi })
-                               else maybe b (`shiftChain` b) (stShift s)) <$> st <*> csBits <*> cs <*> stepped <*> capture <*> memIns
+                               else maybe b (`shiftChain` b) (stShift s)) <$> st <*> csBits <*> cs <*> stepped <*> capture <*> memIns <*> hold
+#endif
+  -- the sound module held (its record kept, its memories unwritten) while
+  -- a load's overlay is armed: it goes on from its written record from
+  -- the clock its routine's last instruction ends (step 7.15)
+#ifndef SNES_STATES_CPU
+  holdApu h c n = if h then n { crApu = crApu c } else n
+#endif
+  frzA = (||) <$> frz <*> hold
+  -- the ROM overlay (the CPU build): armed by the hooks, off once its last
+  -- instruction (the one that read the end address) has finished
+#ifdef SNES_STATES_CPU
+  ovlOn = (\o d -> oiArmed o && not d) <$> ovl <*> ovlDoneR
+  ovlSeen = register False ((\on sn r e -> on && (sn || r == Just e)) <$> ovlOn <*> ovlSeen <*> (boOvl <$> bo) <*> (oiEnd <$> ovl))
+  ovlDone = (\on sn k -> on && sn && isJust k) <$> ovlOn <*> ovlSeen <*> (boStep <$> bo)
+  ovlDoneR = register False ((\o d r -> oiArmed o && (d || r)) <$> ovl <*> ovlDone <*> ovlDoneR)
+  hold = (\on d -> on && not d) <$> ovlOn <*> ovlDone
+  -- (0000h-1FFFh with bit 10 inverted, as "Snes.Spec.Machine"'s)
+  ovlOff a = if a < 0x2000 then (resize a .&. 0x7FF) `xor` 0x400 else resize a .&. 0x7FF :: Unsigned 11
+  ovlD = blockRam (replicate (SNat @2048) (0 :: Unsigned 8)) (maybe 0 ovlOff . boOvl <$> bo)
+           ((\p -> case p of
+               Just (POvl a (Just v)) -> Just (a, v)
+               _ -> Nothing) <$> port)
+#else
+  ovlOn = pure False
+  ovlDone = pure False
+  hold = pure False
+  ovlD = pure 0
+  _unusedOvl = ovl
+#endif
+#ifdef SNES_DSP1
+  -- (while the firmware loads the 5A22 stays as it is: a ROM read of its
+  -- own issued then would take the ROM port from the load, and its answer
+  -- could go to either; it starts once the firmware is in)
+  stepped = CoreRegs <$> busHeld <*> ppu' <*> apu' <*> rp' <*> frame' <*> (boRom <$> bo) <*> (crLatch <$> cs) <*> dsp' <*> (crPad <$> cs)
+  busHeld = (\c b -> if dspLoaded (crDsp c) then b else crBus c) <$> cs <*> bus'
+  -- the DSP-1 (its memories outside: the program and data ROMs, written
+  -- by the load, and RAM; its RAM not written frozen)
+  (dsp', dOut) = dspUnit (crDsp <$> cs) dIn
+  dIn = (\o c op rd m k -> DspIn (boTick o) (boDsp o) (rpOut (crRp c)) (simOp24 op) (simWord rd) m k) <$> bo <*> cs <*> dProg <*> dDat <*> dMem <*> dMemK
+  dRq = dspReq . crDsp <$> cs
+  dProg = blockRam (replicate (SNat @2048) 0) (raPc <$> dRq) (doProgW <$> dOut)
+  dDat = blockRam (replicate d1024 0) (raRp <$> dRq) (doDatW <$> dOut)
+  (dMemR, dMemKR) = tdpRam ((\f r o -> case doRam o of
+                               Just (a, v) | not f -> RamWrite (fromIntegral a) v
+                               _ -> RamRead (fromIntegral (raDp r))) <$> frz <*> dRq <*> dOut)
+                           ((\r -> RamRead (fromIntegral (raDpK r))) <$> dRq :: Signal dom (RamOp 256 (Unsigned 16)))
+  dMem = simWord <$> dMemR
+  dMemK = simWord <$> dMemKR
+#else
   stepped = CoreRegs <$> bus' <*> ppu' <*> apu' <*> rp' <*> frame' <*> (boRom <$> bo) <*> (crLatch <$> cs) <*> (crPad <$> cs)
+#endif
   -- the bytes in flight: the memories', or (the prime) the latch
   memIns = simDefined <$> (Inflight <$> wramD <*> sramD <*> dmaD <*> pinMem <*> aramD <*> aramDsp <*> iplD <*> smpD <*> gaussD)
   ins = (\p c m -> if p then crLatch c else m) <$> prime <*> cs <*> memIns
   -- the 5A22
   (bus', bo) = busUnit (crBus <$> cs) bin
-  bin = (\r cf pd i c pr (a0, a1, av) ->
-           BusIn r cf pd (lWram i) (lSram i) (rpOut (crRp c)) pr a0 a1 av (lDma i))
-          <$> run <*> cfg <*> pads <*> ins <*> cs <*> ppuR <*> apuSt
+#ifdef SNES_DSP1
+  -- (no master clock until the DSP-1's firmware is in)
+  bin = (\r cf pd i c pr (a0, a1, av) on ov ->
+           let d = crDsp c in
+           BusIn (r && dspLoaded d) cf pd (lWram i) (lSram i) (rpOut (crRp c)) pr a0 a1 av (lDma i) on ov (dspReady0 d) (dspReady1 d) (dsByte d))
+          <$> runF <*> cfg <*> pads <*> ins <*> cs <*> ppuR <*> apuSt <*> ovlOn <*> (simByte <$> ovlD)
+#else
+  bin = (\r cf pd i c pr (a0, a1, av) on ov ->
+           BusIn r cf pd (lWram i) (lSram i) (rpOut (crRp c)) pr a0 a1 av (lDma i) on ov)
+          <$> runF <*> cfg <*> pads <*> ins <*> cs <*> ppuR <*> apuSt <*> ovlOn <*> (simByte <$> ovlD)
+#endif
+  -- (no master clock in the CPU build's finishing step, as in a pace stall)
+  runF = (\r s -> r && not (stFinish s)) <$> run <*> st
   -- memory ops: the core's (no writes frozen), or the PS's port
   wramA = (\p o -> case p of
              Just (PWram a _) -> a
@@ -299,7 +485,12 @@ snesCore run cfg pads ddrAnswer psSram st = SnesCore
   -- (the bus's ROM read registered first, 'crRd': the 5A22's step and the
   -- ROM port's in one clock were the Arty's worst path at step 7.12,
   -- -0.456 ns; a read the ROM port answers costs a pixel clock more)
+#ifdef SNES_DSP1
+  -- (the DSP-1's load reads through the ROM port first)
+  (rp', ro) = unbundle (romPortStep <$> (crRp <$> cs) <*> (RomIn <$> ((\c o -> if dspLoaded (crDsp c) then crRd c else doRomReq o) <$> cs <*> dOut) <*> ddrAnswer))
+#else
   (rp', ro) = unbundle (romPortStep <$> (crRp <$> cs) <*> (RomIn <$> (crRd <$> cs) <*> ddrAnswer))
+#endif
   -- the PPU and its memories
   (ppu', po, ppuR) = ppuUnit (crPpu <$> cs) pinFull (lPpu <$> ins)
   pinFull = (\i o -> (lPpu i) { piTick = boTick o, piAccess = boPpu o }) <$> ins <*> bo
@@ -363,7 +554,7 @@ snesCore run cfg pads ddrAnswer psSram st = SnesCore
   (apu', ao, apuSt) = apuUnit (crApu <$> cs) ain
   ain = (\o i -> ApuIn (boTick o) (boApu o) (lAram i) (lDsp i) (lIpl i) (lSmp i) (lGauss i)) <$> bo <*> ins
   -- ARAM: the SPC700's port (the PS's, frozen) and the DSP's
-  (aramD, aramDsp) = tdpRam (aramOp <$> frz <*> port <*> ao) (ramOp aoDAram aoDAramW <$> frz <*> ao)
+  (aramD, aramDsp) = tdpRam (aramOp <$> frzA <*> port <*> ao) (ramOp aoDAram aoDAramW <$> frzA <*> ao)
   aramOp f p o = case p of
     Just (PAram a w) -> maybe (RamRead (fromIntegral a)) (RamWrite (fromIntegral a)) w
     Just _ -> RamRead 0
@@ -381,11 +572,11 @@ snesCore run cfg pads ddrAnswer psSram st = SnesCore
         Just (PSmp a w) -> fmap (a,) w
         Just _ -> Nothing
         _ | f -> Nothing
-          | otherwise -> aoSmpW o) <$> frz <*> port <*> ao)
+          | otherwise -> aoSmpW o) <$> frzA <*> port <*> ao)
   gaussD = blockRam gaussTable (aoGauss <$> ao) (pure Nothing)
   -- the PS's port reads: the memory it asked for last clock
   lastPort = register Nothing port
-  portRd = (\p w v cg oa dm ar sm -> case p of
+  portRd = (\p w v cg oa dm ar sm c -> case p of
               Just (PWram _ _) -> resize (pack w)
               Just (PVram h _ _) -> resize (pack (if h then v !! (1 :: Int) else v !! (0 :: Int)))
               Just (PCgram _ _) -> resize (pack cg)
@@ -393,7 +584,12 @@ snesCore run cfg pads ddrAnswer psSram st = SnesCore
               Just (PDma r _ _) -> resize (pack (dm !! r))
               Just (PAram _ _) -> resize (pack ar)
               Just (PSmp _ _) -> pack sm
-              Nothing -> 0) <$> lastPort <*> wramD <*> vB <*> cgB <*> oamB <*> dmaD <*> aramD <*> smpD
+              -- (in both builds: the direct build's hooks never ask, but
+              -- answering 0 there made its bitstream 3,600 LUTs bigger,
+              -- 40,867 against 37,256, 2026-11-02)
+              Just (PTable n) -> resize (tableByte (crBus c) (crPpu c) n)
+              Just (POvl _ _) -> 0
+              Nothing -> 0) <$> lastPort <*> wramD <*> vB <*> cgB <*> oamB <*> dmaD <*> aramD <*> smpD <*> cs
 
 -- With SNES_HIER defined (@make snes-ooc SNES_OOC=Snes.MachineOoc
 -- SNES_OOC_TOP=snes_machine_ooc SNES_OOC_MODE=hier@ defines it), the three
@@ -432,6 +628,16 @@ apuUnit apuS ain = (apuS', ao, apuStatus <$> apuS)
   (apuS', ao) = unbundle (apuClock <$> apuS <*> ain)
 #ifdef SNES_HIER
 {-# NOINLINE apuUnit #-}
+#endif
+
+#ifdef SNES_DSP1
+-- | The DSP-1's step (a component of its own with SNES_HIER, as the three
+-- above).
+dspUnit :: Signal dom DspRegs -> Signal dom DspIn -> (Signal dom DspRegs, Signal dom DspOut)
+dspUnit s i = unbundle (dspClock <$> s <*> i)
+#ifdef SNES_HIER
+{-# NOINLINE dspUnit #-}
+#endif
 #endif
 
 -- | What the trace prints ("Snes.Machine", SNES_TRACE): the 65C816's

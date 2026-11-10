@@ -6,6 +6,8 @@
 -- core's lockstep checks; a fix in either goes to both). Same machine:
 -- the snes-specfast suite runs both side by side and compares them.
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
 {-|
 The Super Nintendo without its video and sound (PLAN.md step 7.3;
 docs/systems/snes.md): the 5A22 (the 65C816 of "W65c816.Spec", its memory
@@ -45,11 +47,14 @@ module Snes.SpecFast.Machine
   , machineStateSync
   , machineReloaded
   , newMachine
+  , machineSram
+  , machineTakeLog
   , newMachineWith
   , setSkipDraw
   , reset
   , stepCpu
   , runFrames
+  , setRebase
   , runUntilStopped
   , setPads
   , frames
@@ -84,6 +89,9 @@ import Prelude
 
 import Control.Monad (forM_, unless, when)
 import Control.Monad.ST (ST, fixST)
+import GHC.Exts (State#, Word8#)
+import GHC.ST (ST (..))
+import GHC.Word (Word8 (..))
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.Vector.Unboxed as U
@@ -98,7 +106,7 @@ import Snes.SpecFast.Apu
 import Snes.Spec.Map
 import Snes.SpecFast.Ppu
 import Snes.SpecFast.RenderLog
-import Snes.SpecFast.Cpu (Bus (..), Kind (..), Cpu, Run (..))
+import Snes.SpecFast.Cpu (CpuBus (..), Kind (..), Cpu, Run (..))
 import qualified Snes.SpecFast.Cpu as Cpu
 import W65c816.Types (Regs (..), resetRegs)
 
@@ -119,7 +127,8 @@ data Machine s = Machine
   , mPicture :: !(Ppu s)
   , mRender  :: !(RenderLog s)            -- ^ the fast version: the drawing on a second core, or inline
   , mSkip    :: !(STRef s Bool)           -- ^ the fast version: the pixels not drawn (frame skipping)
-  , mCpu     :: !(Cpu s)
+  , mDraw    :: !(MV.MVector s Int)       -- ^ side track W: inline drawing's pending stretch ('flushDraw'): pending, line, field, dot; and 4: whether this line is drawn ('refreshDraw'); 5: 'rebase' off (snes-specfast's twin); never pending in a save state, and not in it
+  , mCpu     :: !(Cpu Machine s)
   , mTrace   :: !(STRef s (Maybe [PpuEvent]))   -- ^ newest first, while tracing
   , mBusTrace :: !(STRef s (Maybe [BusEvent]))  -- ^ newest first, while tracing
   }
@@ -221,6 +230,17 @@ sCount = 62
 newMachine :: B.ByteString -> Cart -> B.ByteString -> ST s (Machine s)
 newMachine = newMachineWith 2
 
+-- | The cartridge's SRAM (side track W: what a battery keeps, the page's
+-- battery saves).
+machineSram :: Machine s -> MV.MVector s Word8
+machineSram = mSram
+
+-- | An exported render log's events since the last take (the machine made
+-- with -1 render threads: side track W, the browser's second worker draws
+-- them, 'Snes.SpecFast.RenderLog''s replayer); valid until it runs again.
+machineTakeLog :: Machine s -> ST s (U.Vector Int)
+machineTakeLog m = rlTake (mRender m)
+
 -- | The fast version's choice: the pixels drawn by @threads@ render
 -- threads ("Snes.SpecFast.RenderLog"; 2 by default), or inline (0), as the
 -- reference model draws them.
@@ -244,21 +264,30 @@ newMachineWith threaded ipl cart file = do
   -- through fixST (the bus's closures don't look at the machine until
   -- the CPU runs)
   fixST $ \m -> do
-    cpu <- Cpu.newCpu Cpu.w65c816 (busFor m) resetRegs
+    cpu <- Cpu.newCpu Cpu.w65c816 m resetRegs
     tr <- newSTRef Nothing
     btr <- newSTRef Nothing
     skipRef <- newSTRef False
     pages <- MV.replicate 65536 (-1)
-    pure (Machine rom (cartMapping cart) (cartSramSize cart) pages wram sram vram cg oam ppu dma st apu picture rlog skipRef cpu tr btr)
- where
-  busFor m = Bus
-    { busRead = \k _ a -> cpuRead m k (fromIntegral a)
-    , busWrite = \_ _ a v -> cpuWrite m (fromIntegral a) v
-    , busIdle = \_ _ -> cpuIdle m
-    , busStopped = cpuIdle m
-    , busNmi = nmiLine m
-    , busIrq = (/= 0) <$> get m sTimeup
-    }
+    draw <- MV.replicate 6 0
+    pure (Machine rom (cartMapping cart) (cartSramSize cart) pages wram sram vram cg oam ppu dma st apu picture rlog skipRef draw cpu tr btr)
+
+-- | The 5A22's side of the CPU's bus (side track W: a class, so the CPU's
+-- code is specialised to the machine's, every cycle a direct call; it was
+-- a record of closures).
+instance CpuBus Machine where
+  cbRead m k _ a = cpuRead m k (fromIntegral a)
+  cbWrite m _ _ a v = cpuWrite m (fromIntegral a) v
+  cbIdle m _ _ = cpuIdle m
+  cbStopped = cpuIdle
+  cbNmi = nmiLine
+  cbIrq m = (/= 0) <$> get m sTimeup
+  {-# INLINE cbRead #-}
+  {-# INLINE cbWrite #-}
+  {-# INLINE cbIdle #-}
+  {-# INLINE cbStopped #-}
+  {-# INLINE cbNmi #-}
+  {-# INLINE cbIrq #-}
 
 get :: Machine s -> Int -> ST s Int
 get m = MV.unsafeRead (mSt m)
@@ -272,7 +301,7 @@ set m = MV.unsafeWrite (mSt m)
 -- skipping): the drawing reads the PPU and writes only the frame buffer,
 -- so nothing the CPU sees changes; the frame keeps the last picture drawn.
 setSkipDraw :: Machine s -> Bool -> ST s ()
-setSkipDraw m = writeSTRef (mSkip m)
+setSkipDraw m on = writeSTRef (mSkip m) on >> refreshDraw m
 
 -- | Power on: the registers their reset values, the CPU through its reset
 -- vector (the sound module starts in its boot ROM).
@@ -282,6 +311,7 @@ reset m = do
   set m sRddiv 0
   set m sRdmpy 0
   Cpu.reset (mCpu m)
+  refreshDraw m
 
 -- | Start recording the PPU's accesses (before the first step).
 traceOn :: Machine s -> ST s ()
@@ -354,6 +384,33 @@ runFrames m n = do
         stopped <- cpuStopped m
         unless (f >= f0 + n || stopped) (stepCpu m >> go)
   go
+  rebase m
+
+-- | The clocks counted from power-on kept small (side track W: the
+-- browser's WebAssembly has a 32-bit Int; the master clock passes 2^31
+-- after 100 s): after a frame, past 2^28 master ticks, it goes back by 142
+-- * 945000 (a multiple of 118125, so the APU's share stays whole, and of 8,
+-- the DMA's alignment) with the frame's start and the joypads' busy end,
+-- and the APU's cycles by the same time (6397952, a multiple of 128).
+-- Only differences and those periods are used: nothing changes.
+rebase :: Machine s -> ST s ()
+rebase m = do
+  mc <- get m sMc
+  -- (the switch kept outside the saved state, 'mDraw' slot 5: save states
+  -- as before)
+  off <- MV.unsafeRead (mDraw m) 5
+  when (mc >= 1 `shiftL` 28 && off == 0) $ do
+    syncApu m
+    let dm = 142 * 945000
+        da = (dm `div` 118125) * 5632
+    set m sMc (mc - dm)
+    get m sFrameStart >>= set m sFrameStart . subtract dm
+    get m sJoyBusyUntil >>= set m sJoyBusyUntil . subtract dm
+    apuRebase (mApu m) da
+
+-- | 'rebase' on (the default) or off: snes-specfast's twin (64 bits only).
+setRebase :: Machine s -> Bool -> ST s ()
+setRebase m on = MV.unsafeWrite (mDraw m) 5 (if on then 0 else 1)
 
 -- | Runs until STP or @n@ frames; whether it stopped.
 runUntilStopped :: Machine s -> Int -> ST s Bool
@@ -395,7 +452,10 @@ apuOf = mApu
 syncApu :: Machine s -> ST s ()
 syncApu m = do
   mc <- get m sMc
-  runApuTo (mApu m) ((mc * 5632) `div` 118125)
+  -- (mc 5632 / 118125 as quotient and remainder: the product overflowed a
+  -- 32-bit Int after one frame, in the browser)
+  let (q, r) = mc `divMod` 118125
+  runApuTo (mApu m) (q * 5632 + (r * 5632) `div` 118125)
 
 -- | BG1's first 32 × 32 tilemap as text: each entry's tile number's low
 -- byte as a character (the test ROMs' fonts are ASCII), others as spaces.
@@ -474,15 +534,70 @@ tick m n
 -- | The visible lines (1 to 224, or 239 with overscan) draw their pixels
 -- as their dots pass: dot 22 + x is pixel x.
 render :: Machine s -> Int -> ST s ()
-render m hc = do
+render m !hc
+  | not (rlThreaded (mRender m)) = renderInline m hc
+  | otherwise = renderThreaded m hc
+{-# INLINE render #-}
+
+-- | 'render' for inline drawing: a check and two writes, inlined into
+-- 'tick' (side track W: it was a call on every tick).
+renderInline :: Machine s -> Int -> ST s ()
+renderInline m !hc = do
+      -- (side track W: inline, whether the line is drawn worked out where
+      -- it changes, 'refreshDraw', not on every tick; the stretch drawn
+      -- when something it reads is about to change, 'flushDraw')
+      let d = mDraw m
+      ok <- MV.unsafeRead d 4
+      when (ok /= 0) $ MV.unsafeWrite d 0 1 >> MV.unsafeWrite d 3 (hc `div` 4)
+{-# INLINE renderInline #-}
+
+-- | 'render' for the render threads: their log notes how far the line may
+-- be drawn.
+renderThreaded :: Machine s -> Int -> ST s ()
+renderThreaded m !hc = do
   v <- get m sVc
   vbs <- vblankStart m
   when (v >= 1 && v < vbs) $ do
     f <- get m sField
     skip <- readSTRef (mSkip m)
-    if skip then pure () else if rlThreaded (mRender m)
-      then rlDraw (mRender m) v f (hc `div` 4)
-      else ppuRenderTo (mPicture m) v f (hc `div` 4)
+    if skip then pure () else rlDraw (mRender m) v f (hc `div` 4)
+
+-- | Inline drawing: whether the line now is drawn (a visible line, frame
+-- skipping off), and its line and field for the stretches ('render'). At
+-- each new line, and where its inputs change: frame skipping, SETINI's
+-- overscan, a reset or a save state loaded. (The pending stretch, if
+-- any, was drawn before: every such change flushes first.)
+refreshDraw :: Machine s -> ST s ()
+refreshDraw m = do
+  v <- get m sVc
+  vbs <- vblankStart m
+  f <- get m sField
+  skip <- readSTRef (mSkip m)
+  let d = mDraw m
+  MV.unsafeWrite d 4 (if v >= 1 && v < vbs && not skip then 1 else 0)
+  MV.unsafeWrite d 1 v
+  MV.unsafeWrite d 2 f
+
+-- | Inline drawing: the pending stretch drawn ('render'). Called before
+-- every change to what the drawing reads (a PPU register, VRAM, CGRAM
+-- write; the line's sprites; a new line), before the frame is read, and
+-- before a save state.
+flushDraw :: Machine s -> ST s ()
+flushDraw m = do
+  let d = mDraw m
+  has <- MV.unsafeRead d 0
+  when (has /= 0) (drawPending m)
+{-# INLINE flushDraw #-}
+
+drawPending :: Machine s -> ST s ()
+drawPending m = do
+  let d = mDraw m
+  MV.unsafeWrite d 0 0
+  v <- MV.unsafeRead d 1
+  f <- MV.unsafeRead d 2
+  u <- MV.unsafeRead d 3
+  ppuRenderTo (mPicture m) v f u
+{-# NOINLINE drawPending #-}
 
 -- (side track Q: not inlined into 'tick', whose common path is a few
 -- reads and writes; inlined, the rare events made it one large function
@@ -509,6 +624,7 @@ event m hc = do
         -- chip's time; OAM takes no writes on visible lines)
         -- (in forced blank none: the line buffer is only cleared)
         when (hc == 1120 && v + 1 >= 1 && v + 1 < vbs) $ do
+          flushDraw m
           inidisp <- MV.read (mPpu m) 0x00
           if inidisp .&. 0x80 /= 0 then ppuClearSprites (mPicture m) >> rlClearObj (mRender m)
             else set m sSprBusy 1 >> get m sOamRel >>= ppuSprites (mPicture m) v >> rlObj (mRender m) (mPicture m)
@@ -520,6 +636,7 @@ event m hc = do
   newLine = do
     syncApu m
     render m 2000
+    flushDraw m
     set m sHc 0
     set m sSprBusy 0
     v <- get m sVc
@@ -549,10 +666,12 @@ event m hc = do
     when (v' == 0 && inidisp .&. 0x80 == 0) $ ppuClearFlags (mPicture m)
     -- the line's log to the render thread
     rlLineEnd (mRender m)
+    -- (inline drawing: the new line's)
+    refreshDraw m
 
 -- | The last frame's picture, 512 × 239 15-bit colours (see "Snes.Spec.Ppu").
 frameColors :: Machine s -> ST s (U.Vector Word16)
-frameColors m = rlFrame (mRender m) (mPicture m)
+frameColors m = flushDraw m >> rlFrame (mRender m) (mPicture m)
 
 -- | The fast version: the frame before the latest, as the render threads
 -- finished it, without waiting for this one (the desktop's picture one
@@ -710,8 +829,19 @@ target m a = do
        _ -> decode (mMapping m) (U.length (mRom m)) (mSramSize m) a
 {-# INLINE target #-}
 
+-- (side track W: out of line with its byte unboxed by hand, as the NES's
+-- bus read: GHC returned it boxed, 16 bytes a read, which the browser pays
+-- for)
 busReadA :: Machine s -> Int -> ST s Word8
-busReadA m a = target m a >>= \t -> case t of
+busReadA m a = ST (\s -> case busReadAU m a s of (# s', w #) -> (# s', W8# w #))
+{-# INLINE busReadA #-}
+
+busReadAU :: Machine s -> Int -> State# s -> (# State# s, Word8# #)
+busReadAU m a s = case busReadABody m a of ST f -> case f s of (# s', W8# w #) -> (# s', w #)
+{-# NOINLINE busReadAU #-}
+
+busReadABody :: Machine s -> Int -> ST s Word8
+busReadABody m !a = target m a >>= \t -> case t of
   TWram o -> MV.read (mWram m) o
   TRom o -> pure (mRom m U.! o)
   TSram o -> MV.read (mSram m) o
@@ -719,6 +849,7 @@ busReadA m a = target m a >>= \t -> case t of
   TJoy r -> joyRead m r
   TCpuReg r -> regRead m r
   TOpen -> mdr m
+{-# INLINE busReadABody #-}
 
 busWriteA :: Machine s -> Int -> Word8 -> ST s ()
 busWriteA m a v = target m a >>= \t -> case t of
@@ -818,6 +949,8 @@ busWriteB m r v0
   | r == 0x82 = get m sWmadd >>= set m sWmadd . (\a -> (a .&. 0x100FF) .|. (v `shiftL` 8))
   | r == 0x83 = get m sWmadd >>= set m sWmadd . (\a -> (a .&. 0x0FFFF) .|. ((v .&. 1) `shiftL` 16))
   | r < 0x40 = do
+      -- (inline drawing: the pixels so far, before the write)
+      flushDraw m
       record m (PpuWrite r v0)
       case r of
         0x02 -> do
@@ -888,7 +1021,7 @@ busWriteB m r v0
         _ -> pure ()
       unless ((r >= 0x1B && r <= 0x20) || (r >= 0x0D && r <= 0x14) || r == 0x32) $ MV.write (mPpu m) r v >> rlReg (mRender m) r v
       -- (SETINI: the line length, so the cached next event)
-      when (r == 0x33) $ set m sNextEv (-1)
+      when (r == 0x33) $ set m sNextEv (-1) >> refreshDraw m
   | otherwise = pure ()
  where
   v = fromIntegral v0 :: Int
@@ -1254,9 +1387,9 @@ machineFields m =
 
 -- | Before a save state is taken or loaded: the render threads idle.
 machineStateSync :: Machine s -> ST s ()
-machineStateSync m = rlSync (mRender m)
+machineStateSync m = flushDraw m >> rlSync (mRender m)
 
 -- | After a save state is loaded: the render threads' copies of the PPU
 -- made the machine's again.
 machineReloaded :: Machine s -> ST s ()
-machineReloaded m = rlReload (mRender m) (mPicture m)
+machineReloaded m = rlReload (mRender m) (mPicture m) >> refreshDraw m

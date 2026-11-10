@@ -65,6 +65,7 @@ module Gg.SpecFast.Vdp
   ( Vdp
   , vdpFields
   , newVdp
+  , vdpRebase
   , newVdpSms
   , vdpSms
   , vdpWidth
@@ -264,6 +265,12 @@ vdpBorder :: Vdp s -> ST s Word16
 vdpBorder v = fromIntegral <$> gs v sBorder
 
 -- | Run the VDP up to (not including) dot @target@.
+-- | The dot count moved back by @n@ dots, a whole number of frames
+-- ("Gg.SpecFast"'s 'rebase': WebAssembly's Int is 32 bits); the VDP only
+-- uses it modulo a line or a frame.
+vdpRebase :: Vdp s -> Int -> ST s ()
+vdpRebase v n = gs v sDot >>= ss v sDot . subtract n
+
 vdpSync :: Vdp s -> Int -> ST s ()
 vdpSync v target = do
   cur <- gs v sDot

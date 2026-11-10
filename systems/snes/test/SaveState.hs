@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=0 #-}
 {-# LANGUAGE FlexibleContexts #-}
 -- | snes-savestate (PLAN.md step 7.14a; docs/systems/snes.md, "Save
@@ -39,6 +40,12 @@ import Test.Tasty.HUnit
 import Snes.Bus (CartCfg (..), CartMap (..))
 import Snes.Cart
 import Snes.Core
+#ifdef SNES_STATES_CPU
+import LoadCpu (loadTest)
+#endif
+#ifdef SNES_DSP1
+import DspCircuit (dspCircuitTest)
+#endif
 
 romDir :: FilePath
 romDir = "roms/snes"
@@ -53,6 +60,16 @@ main = do
   defaultMain $ testGroup "snes-savestate" $
     [ testCase "the chain is whole bytes" $ chainBytes * 8 @?= fromIntegral (C.natToInteger @(C.BitSize CoreRegs)) ]
     <> if not full then [] else
+#ifdef SNES_DSP1
+    -- (the DSP-1 build, step 7.16d: our DSP-1 test cartridge on the circuit)
+    [ testCase "dsp1.sfc on the circuit (the DSP-1 build): the backdrop green" dspCircuitTest ]
+#elif defined(SNES_STATES_CPU)
+    -- (the CPU build, step 7.15c: a load through the 65C816's routine)
+    [ testCase "Mode7HDMA.sfc: a load through the CPU resumes as the original" (loadTest (romDir </> "krom" </> "Mode7HDMA.sfc") 5 100000)
+    , testCase "tone.sfc: the same (its sound)" (loadTest ("build/snes/asm" </> "tone.sfc") 2 100000)
+    , testCase "shmup_1942.sfc: the same" (loadTest (romDir </> "opensnes" </> "shmup_1942.sfc") 5 100000)
+    ]
+#else
     -- (tone.sfc frozen after 2 frames: its sound program in ARAM, the SPC700
     -- running it; at frame 0 it is still in its boot ROM, ARAM all zeros,
     -- and a move that left ARAM out passed)
@@ -64,6 +81,7 @@ main = do
     -- no sound by then, tone.sfc's case has it)
     , testCase "shmup_1942.sfc: the same" (moveTest (romDir </> "opensnes" </> "shmup_1942.sfc") 5 False True)
     ]
+#endif
 
 -- | What a core shows each clock (compared between the two).
 type Seen = (Maybe (Unsigned 8, Unsigned 8, Unsigned 15, Unsigned 15), Maybe (C.Signed 16, C.Signed 16), Maybe (Unsigned 23), Unsigned 9, Unsigned 11)
@@ -136,8 +154,8 @@ moveTest path frames sound picture = do
       ddr req = register Nothing (fmap (\a -> C.unpack (C.pack (C.map (\k -> fromIntegral (rom U.! ((fromIntegral a `div` 8 * 8 + k) `mod` romSize))) (C.iterateI (+ 1) (0 :: Int)) :: Vec 8 (Unsigned 8)))) <$> req)
       circuit :: Signal C.System (Seen, Seen, (Phase, (Maybe Mismatch, Maybe (Int, Bool, Bool))))
       circuit = withClockResetEnable systemClockGen (resetGen @C.System) C.enableGen $
-        let coreA = snesCore (pure True) (pure cfg) (pure (C.repeat 0)) (ddr (scDdrReq coreA)) (pure (C.RamRead 0)) stA
-            coreB = snesCore (pure True) (pure cfg) (pure (C.repeat 0)) (ddr (scDdrReq coreB)) (pure (C.RamRead 0)) stB
+        let coreA = snesCore (pure True) (pure cfg) (pure (C.repeat 0)) (ddr (scDdrReq coreA)) (pure (C.RamRead 0)) stA (pure ovlIdle)
+            coreB = snesCore (pure True) (pure cfg) (pure (C.repeat 0)) (ddr (scDdrReq coreB)) (pure (C.RamRead 0)) stB (pure ovlIdle)
             (stA, stB, ph) = unbundle (mealy ctl (PRun, 0 :: Int)
                                          (bundle (scRest coreA, scV coreA, scTop coreA, scPortRd coreA, scTop coreB, scPortRd coreB)))
             seen c = bundle (scPixel c, scSample c, scDdrReq c, scV c, scH c)
@@ -187,7 +205,7 @@ moveTest path frames sound picture = do
           | i < nOps -> ((PCMem (i + 1), n + 1), (frozen Nothing (Just (opAt i False Nothing)), frozen Nothing (Just (opAt i False Nothing)), phase))
           | otherwise -> trace ("states compared at clock " <> show n) ((PDone, n + 1), (frozen Nothing Nothing, frozen Nothing Nothing, phase))
         PDone -> ((PDone, n + 1), (frozen Nothing Nothing, frozen Nothing Nothing, phase))
-      frozen sh pt = StCtl True sh pt
+      frozen sh pt = StCtl True sh pt False
       -- one pass, nothing kept but counts and the first difference (the
       -- samples are a million clocks)
       -- (every sample's outputs forced, whatever the phase: an output not

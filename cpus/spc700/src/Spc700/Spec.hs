@@ -28,6 +28,7 @@ module Spc700.Spec
   , setRegs
   , cpuCycles
   , cpuHalted
+  , cpuCopy
   , Step (..)
   , step
   ) where
@@ -52,6 +53,12 @@ data Cpu s = Cpu
   { cpuBus   :: !(Bus s)
   , cpuState :: !(MV.MVector s Int)
   }
+
+-- | The second CPU's whole state (its registers, cycle count, halt) made
+-- the first's; each keeps its own bus (the SNES's save states, step 7.15:
+-- the sound module moved whole in the spec's restore test).
+cpuCopy :: Cpu s -> Cpu s -> ST s ()
+cpuCopy from to = MV.copy (cpuState to) (cpuState from)
 
 iA, iX, iY, iSP, iPC, iPSW, iCyc, iHalt :: Int
 iA = 0

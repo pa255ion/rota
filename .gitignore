@@ -27,3 +27,9 @@ zig-out/
 
 # Claude Code worktrees for parallel sessions (CLAUDE.md, "Parallel sessions")
 .claude/worktrees/
+# side track W: the browser build's outputs
+web/dist-newstyle/
+web/www/*.wasm
+web/www/rota.gg
+web/www/rota.sms
+web/tools/node_modules/

@@ -37,6 +37,15 @@ displayTests = testGroup "the line ring's pace"
       let s = lateRun False (\n -> (n >= frame + 50 * 800 && n < 2 * frame + 300 * 800, False)) 12
       pcLate s @?= 0
       pcSettle s @?= False
+  -- (step 7.15c: the core run on after a hold, a master clock a pixel
+  -- clock, made a pause's or a save's frames 17% fast, the sound with them)
+  , testCase "after holds (a frame and a half, 40 lines, 300): no frame of the core's faster than the output's, the picture black only until in step" $
+      mapM_ (\(a, b) -> do
+               let (s, most, blankAt) = burstRun (\n -> n >= a && n < b) 8
+               assertBool ("hold " <> show (a, b) <> ": " <> show most <> " master clocks in an output frame") (most <= 262 * 1364 + 1364)
+               pcBlank s @?= False
+               assertBool ("hold " <> show (a, b) <> ": black " <> show blankAt <> " frames after") (blankAt <= 2))
+            [ (frame + 50 * 800, 2 * frame + 300 * 800), (frame + 100 * 800, frame + 140 * 800), (2 * frame + 470 * 800, 2 * frame + 770 * 800) ]
   , testCase "239 lines, from reset: nothing counted" $ do
       let s = lateRun True (const (False, False)) 3
       pcLate s @?= 0
@@ -60,6 +69,29 @@ lateRun ov stop nFrames = go (zip [0 ..] (drop 1 (C.sampleN @C.System (nFrames *
                      | v + 1 < 262 = (f, v + 1, 0)
                      | otherwise = (f + 1, 0, 0)
     in s' `seq` go rest s' f' v' h'
+
+-- | The pace over N output frames with a hold (as 'lateRun'): the end, the
+-- most master clocks the core took in an output frame after the hold's
+-- start, and the output frames after the hold ended that were black.
+burstRun :: (Int -> Bool) -> Int -> (Pace, Int, Int)
+burstRun held nFrames = go (zip [0 ..] (drop 1 (C.sampleN @C.System (nFrames * 525 * 800 + 1) (vgaTiming vga640x480)))) paceInit (0 :: Int) (0 :: Int) (0 :: Int) (0 :: Int) (0 :: Int) (0 :: Int) False
+ where
+  pos f v h = (f * 262 + v) * 1364 + h
+  go [] s _ _ _ _ most blk _ = (s, most, blk)
+  go ((n, o) : rest) s f v h at most blk was =
+    let hd = held n
+        (s', run) = paceStep s (PaceIn o (fromIntegral (f `mod` 4)) (fromIntegral v) (fromIntegral h) False hd)
+        (f', v', h') | not run || hd = (f, v, h)
+                     | h + 1 < 1364 = (f, v, h + 1)
+                     | v + 1 < 262 = (f, v + 1, 0)
+                     | otherwise = (f + 1, 0, 0)
+        start = vgaFrameStart o
+        p = pos f v h
+        seenHold = was || hd
+        most' = if start && seenHold then max most (p - at) else most
+        blk' = if start && seenHold && not hd && pcBlank s then blk + 1 else blk
+        at' = if start then p else at
+    in s' `seq` go rest s' f' v' h' at' most' blk' seenHold
 
 paceCheck :: Bool -> Assertion
 -- (the timing's first sample is its reset cycle, at 0, 0 as the next: in

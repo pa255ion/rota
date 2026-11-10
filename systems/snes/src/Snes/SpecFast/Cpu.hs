@@ -61,6 +61,7 @@ module Snes.SpecFast.Cpu
   , singleStep65816
     -- * The bus
   , Bus (..)
+  , CpuBus (..)
   , Kind (..)
     -- * The CPU
   , Cpu
@@ -130,9 +131,38 @@ data Bus s = Bus
   , busIrq     :: ST s Bool -- ^ the IRQ line, 'True' = asserted
   }
 
-data Cpu s = Cpu
+-- | The bus as a class (side track W, as the NES's 6502): the machine's
+-- instance is specialised into the core, every bus cycle a direct call;
+-- through the 'Bus' record every one was a call to an unknown closure,
+-- which the browser pays for. The record stays an instance (the single
+-- step tests' bus).
+class CpuBus b where
+  cbRead    :: b s -> Kind -> Bool -> Word32 -> ST s Word8
+  cbWrite   :: b s -> Bool -> Bool -> Word32 -> Word8 -> ST s ()
+  cbIdle    :: b s -> Bool -> Word32 -> ST s ()
+  cbStopped :: b s -> ST s ()
+  cbNmi     :: b s -> ST s Bool
+  cbIrq     :: b s -> ST s Bool
+
+instance CpuBus Bus where
+  cbRead = busRead
+  cbWrite = busWrite
+  cbIdle = busIdle
+  cbStopped = busStopped
+  cbNmi = busNmi
+  cbIrq = busIrq
+  {-# INLINE cbRead #-}
+  {-# INLINE cbWrite #-}
+  {-# INLINE cbIdle #-}
+  {-# INLINE cbStopped #-}
+  {-# INLINE cbNmi #-}
+  {-# INLINE cbIrq #-}
+
+-- (the bus lazy: the machine holds its CPU and is the CPU's bus, the two
+-- tied with fixST)
+data Cpu b s = Cpu
   { cpuConfig :: !Config
-  , cpuBus   :: !(Bus s)
+  , cpuBus   :: b s
   , cpuState :: !(MV.MVector s Int)
   }
 
@@ -165,14 +195,14 @@ slots = 18
 data Run = Running | Waiting | Stopped
   deriving stock (Show, Eq)
 
-newCpu :: Config -> Bus s -> Regs -> ST s (Cpu s)
+newCpu :: CpuBus b => Config -> b s -> Regs -> ST s (Cpu b s)
 newCpu cfg bus r = do
   st <- MV.replicate slots 0
   let c = Cpu cfg bus st
   setRegs c r
   pure c
 
-getRegs :: Cpu s -> ST s Regs
+getRegs :: CpuBus b => Cpu b s -> ST s Regs
 getRegs c = do
   normalise c
   Regs <$> w16 iA <*> w16 iX <*> w16 iY <*> w16 iS <*> w16 iD
@@ -183,7 +213,7 @@ getRegs c = do
 
 -- | Sets the registers; in emulation mode S's high byte is 01h, X's and
 -- Y's high bytes 00h and P's bits 4 and 5 set, whatever is given.
-setRegs :: Cpu s -> Regs -> ST s ()
+setRegs :: CpuBus b => Cpu b s -> Regs -> ST s ()
 setRegs c r = do
   s c iA (fromIntegral (rA r))
   s c iX (fromIntegral (rX r))
@@ -198,10 +228,10 @@ setRegs c r = do
   normalise c
 
 -- | Cycles run since 'newCpu'.
-cpuCycles :: Cpu s -> ST s Int
+cpuCycles :: CpuBus b => Cpu b s -> ST s Int
 cpuCycles c = g c iCyc
 
-cpuRun :: Cpu s -> ST s Run
+cpuRun :: CpuBus b => Cpu b s -> ST s Run
 cpuRun c = (\r -> case r of 0 -> Running; 1 -> Waiting; _ -> Stopped) <$> g c iRun
 
 -- | What a 'step' did.
@@ -215,35 +245,35 @@ data Step
 
 -- * State access
 
-g :: Cpu s -> Int -> ST s Int
+g :: CpuBus b => Cpu b s -> Int -> ST s Int
 g c = MV.unsafeRead (cpuState c)
 {-# INLINE g #-}
 
-s :: Cpu s -> Int -> Int -> ST s ()
+s :: CpuBus b => Cpu b s -> Int -> Int -> ST s ()
 s c = MV.unsafeWrite (cpuState c)
 {-# INLINE s #-}
 
-emu :: Cpu s -> ST s Bool
+emu :: CpuBus b => Cpu b s -> ST s Bool
 emu c = (/= 0) <$> g c iE
 
-flag :: Cpu s -> Word8 -> ST s Bool
+flag :: CpuBus b => Cpu b s -> Word8 -> ST s Bool
 flag c f = (\p -> p .&. fromIntegral f /= 0) <$> g c iP
 
-setFlag :: Cpu s -> Word8 -> Bool -> ST s ()
+setFlag :: CpuBus b => Cpu b s -> Word8 -> Bool -> ST s ()
 setFlag c f b = do
   p <- g c iP
   s c iP (if b then p .|. fromIntegral f else p .&. complement (fromIntegral f))
 
 -- | 8-bit accumulator and memory.
-m8 :: Cpu s -> ST s Bool
+m8 :: CpuBus b => Cpu b s -> ST s Bool
 m8 c = flag c flagM
 
 -- | 8-bit index registers.
-x8 :: Cpu s -> ST s Bool
+x8 :: CpuBus b => Cpu b s -> ST s Bool
 x8 c = flag c flagX
 
 -- | Emulation mode's invariants, and the 8-bit index registers' high bytes.
-normalise :: Cpu s -> ST s ()
+normalise :: CpuBus b => Cpu b s -> ST s ()
 normalise c = do
   e <- emu c
   when e $ do
@@ -256,7 +286,7 @@ normalise c = do
     g c iX >>= s c iX . (.&. 0xFF)
     g c iY >>= s c iY . (.&. 0xFF)
 
-setNZ :: Cpu s -> Bool -> Int -> ST s ()
+setNZ :: CpuBus b => Cpu b s -> Bool -> Int -> ST s ()
 setNZ c eight v = do
   let (n, z) = if eight then (v .&. 0x80 /= 0, v .&. 0xFF == 0)
                         else (v .&. 0x8000 /= 0, v .&. 0xFFFF == 0)
@@ -266,71 +296,71 @@ setNZ c eight v = do
 -- * Cycles
 
 -- | The end of every cycle: sample NMI and IRQ.
-endCycle :: Cpu s -> ST s ()
+endCycle :: CpuBus b => Cpu b s -> ST s ()
 endCycle c = do
   let bus = cpuBus c
-  nmi <- busNmi bus
+  nmi <- cbNmi bus
   prevLine <- g c iNmiLine
   when (nmi && prevLine == 0) (s c iNmiNeed 1)
   s c iNmiLine (if nmi then 1 else 0)
-  irq <- busIrq bus
+  irq <- cbIrq bus
   i <- flag c flagI
   need <- g c iNmiNeed
   s c iPollPrev =<< g c iPollCur
   s c iPollCur (need .|. (if irq && not i then 2 else 0))
   g c iCyc >>= s c iCyc . (+ 1)
 
-lockNow :: Cpu s -> ST s Bool
+lockNow :: CpuBus b => Cpu b s -> ST s Bool
 lockNow c = (/= 0) <$> g c iLock
 
-rd :: Cpu s -> Kind -> Int -> ST s Int
+rd :: CpuBus b => Cpu b s -> Kind -> Int -> ST s Int
 rd c k a = do
   l <- lockNow c
-  v <- busRead (cpuBus c) k l (fromIntegral (a .&. 0xFFFFFF))
+  v <- cbRead (cpuBus c) k l (fromIntegral (a .&. 0xFFFFFF))
   endCycle c
   pure (fromIntegral v)
 
-wr :: Cpu s -> Int -> Int -> ST s ()
+wr :: CpuBus b => Cpu b s -> Int -> Int -> ST s ()
 wr c a v = wrV c True a v
 
-wrV :: Cpu s -> Bool -> Int -> Int -> ST s ()
+wrV :: CpuBus b => Cpu b s -> Bool -> Int -> Int -> ST s ()
 wrV c vda a v = do
   l <- lockNow c
-  busWrite (cpuBus c) vda l (fromIntegral (a .&. 0xFFFFFF)) (fromIntegral v)
+  cbWrite (cpuBus c) vda l (fromIntegral (a .&. 0xFFFFFF)) (fromIntegral v)
   endCycle c
 
-io :: Cpu s -> Int -> ST s ()
+io :: CpuBus b => Cpu b s -> Int -> ST s ()
 io c a = do
   l <- lockNow c
-  busIdle (cpuBus c) l (fromIntegral (a .&. 0xFFFFFF))
+  cbIdle (cpuBus c) l (fromIntegral (a .&. 0xFFFFFF))
   endCycle c
 
 -- | PBR:PC.
-pcAddr :: Cpu s -> ST s Int
+pcAddr :: CpuBus b => Cpu b s -> ST s Int
 pcAddr c = do
   b <- g c iPBR
   pc <- g c iPC
   pure (b `shiftL` 16 .|. pc)
 
 -- | An internal cycle at PBR:PC (the byte after the instruction so far).
-ioPC :: Cpu s -> ST s ()
+ioPC :: CpuBus b => Cpu b s -> ST s ()
 ioPC c = pcAddr c >>= io c
 
 -- | An internal cycle at PBR:PC-1 (the last operand byte fetched).
-ioLast :: Cpu s -> ST s ()
+ioLast :: CpuBus b => Cpu b s -> ST s ()
 ioLast c = do
   b <- g c iPBR
   pc <- g c iPC
   io c (b `shiftL` 16 .|. ((pc - 1) .&. 0xFFFF))
 
 -- | An operand byte at PBR:PC; PC advances within the bank.
-fetch :: Cpu s -> ST s Int
+fetch :: CpuBus b => Cpu b s -> ST s Int
 fetch c = do
   a <- pcAddr c
   g c iPC >>= s c iPC . (\pc -> (pc + 1) .&. 0xFFFF)
   rd c KOperand a
 
-fetch16 :: Cpu s -> ST s Int
+fetch16 :: CpuBus b => Cpu b s -> ST s Int
 fetch16 c = do
   lo <- fetch c
   hi <- fetch c
@@ -339,14 +369,14 @@ fetch16 c = do
 -- * Stack
 
 -- | Push, 6502 style: in emulation mode within page 1.
-push :: Cpu s -> Int -> ST s ()
+push :: CpuBus b => Cpu b s -> Int -> ST s ()
 push c v = do
   sp <- g c iS
   wr c sp v
   e <- emu c
   s c iS (if e then 0x100 .|. ((sp - 1) .&. 0xFF) else (sp - 1) .&. 0xFFFF)
 
-pull :: Cpu s -> ST s Int
+pull :: CpuBus b => Cpu b s -> ST s Int
 pull c = do
   sp <- g c iS
   e <- emu c
@@ -355,13 +385,13 @@ pull c = do
   rd c KData sp'
 
 -- | Push, the 65816's own instructions: the full 16-bit S.
-pushN :: Cpu s -> Int -> ST s ()
+pushN :: CpuBus b => Cpu b s -> Int -> ST s ()
 pushN c v = do
   sp <- g c iS
   wr c sp v
   s c iS ((sp - 1) .&. 0xFFFF)
 
-pullN :: Cpu s -> ST s Int
+pullN :: CpuBus b => Cpu b s -> ST s Int
 pullN c = do
   sp <- g c iS
   let sp' = (sp + 1) .&. 0xFFFF
@@ -372,18 +402,18 @@ pullN c = do
 
 -- | A direct page address, 6502 style: page-wrapped in emulation mode
 -- with DL = 0.
-dp :: Cpu s -> Int -> ST s Int
+dp :: CpuBus b => Cpu b s -> Int -> ST s Int
 dp c off = do
   d <- g c iD
   e <- emu c
   pure $ if e && d .&. 0xFF == 0 then d .|. (off .&. 0xFF) else (d + off) .&. 0xFFFF
 
 -- | A direct page address, the 65816's own modes: no page wrap.
-dpN :: Cpu s -> Int -> ST s Int
+dpN :: CpuBus b => Cpu b s -> Int -> ST s Int
 dpN c off = (\d -> (d + off) .&. 0xFFFF) <$> g c iD
 
 -- | The extra cycle of a direct page mode when DL isn't zero.
-dlPenalty :: Cpu s -> ST s ()
+dlPenalty :: CpuBus b => Cpu b s -> ST s ()
 dlPenalty c = do
   d <- g c iD
   when (d .&. 0xFF /= 0) (ioLast c)
@@ -407,7 +437,7 @@ data Mode
 
 -- | The cycles of a mode up to its data; the data's address and wrap.
 -- (Not 'Imm'.)
-address :: Cpu s -> Access -> Mode -> ST s (Int, Wrap)
+address :: CpuBus b => Cpu b s -> Access -> Mode -> ST s (Int, Wrap)
 address c acc mode = case mode of
   Abs -> do
     aa <- fetch16 c
@@ -521,7 +551,7 @@ address c acc mode = case mode of
     pure (b `shiftL` 16 .|. hi `shiftL` 8 .|. lo)
 
 -- | Reads an operand of 8 or 16 bits.
-readOperand :: Cpu s -> Bool -> Mode -> ST s Int
+readOperand :: CpuBus b => Cpu b s -> Bool -> Mode -> ST s Int
 readOperand c eight Imm = if eight then fetch c else fetch16 c
 readOperand c eight mode = do
   (a, w) <- address c ARead mode
@@ -530,7 +560,7 @@ readOperand c eight mode = do
     hi <- rd c KData (nextAddr w a)
     pure (lo .|. hi `shiftL` 8)
 
-writeOperand :: Cpu s -> Bool -> Mode -> Int -> ST s ()
+writeOperand :: CpuBus b => Cpu b s -> Bool -> Mode -> Int -> ST s ()
 writeOperand c eight mode v = do
   (a, w) <- address c AWrite mode
   wr c a (v .&. 0xFF)
@@ -539,7 +569,7 @@ writeOperand c eight mode v = do
 -- | A read-modify-write: the data, the modify cycle (an internal cycle; in
 -- emulation mode a write of the unchanged byte with VDA low), the result,
 -- high byte first.
-modify :: Cpu s -> Mode -> (Bool -> Int -> ST s Int) -> ST s ()
+modify :: CpuBus b => Cpu b s -> Mode -> (Bool -> Int -> ST s Int) -> ST s ()
 modify c mode f = do
   eight <- m8 c
   e <- emu c
@@ -556,21 +586,21 @@ modify c mode f = do
 
 -- * Registers by width
 
-getAcc :: Cpu s -> Bool -> ST s Int
+getAcc :: CpuBus b => Cpu b s -> Bool -> ST s Int
 getAcc c eight = (\a -> if eight then a .&. 0xFF else a) <$> g c iA
 
 -- | Sets A (8 bits: only the low byte, B kept).
-setAcc :: Cpu s -> Bool -> Int -> ST s ()
+setAcc :: CpuBus b => Cpu b s -> Bool -> Int -> ST s ()
 setAcc c eight v = do
   a <- g c iA
   s c iA (if eight then (a .&. 0xFF00) .|. (v .&. 0xFF) else v .&. 0xFFFF)
 
-setIdx :: Cpu s -> Int -> Bool -> Int -> ST s ()
+setIdx :: CpuBus b => Cpu b s -> Int -> Bool -> Int -> ST s ()
 setIdx c i eight v = s c i (if eight then v .&. 0xFF else v .&. 0xFFFF)
 
 -- * Arithmetic
 
-adc :: Cpu s -> Bool -> Int -> ST s ()
+adc :: CpuBus b => Cpu b s -> Bool -> Int -> ST s ()
 adc c eight d = do
   a <- getAcc c eight
   cf <- flag c flagC
@@ -599,7 +629,7 @@ adc c eight d = do
       in if k == n - 1 then (r, r')
          else go (k + 1) (if r' > full then 1 else 0) (r' .&. full)
 
-sbc :: Cpu s -> Bool -> Int -> ST s ()
+sbc :: CpuBus b => Cpu b s -> Bool -> Int -> ST s ()
 sbc c eight d0 = do
   a <- getAcc c eight
   cf <- flag c flagC
@@ -626,7 +656,7 @@ sbc c eight d0 = do
       in if k == n - 1 then (r, r') else go (k + 1) c' (r' .&. top)
     m k = 0xF `shiftL` (4 * k)
 
-cmpReg :: Cpu s -> Bool -> Int -> Int -> ST s ()
+cmpReg :: CpuBus b => Cpu b s -> Bool -> Int -> Int -> ST s ()
 cmpReg c eight reg v = do
   let lim = if eight then 0xFF else 0xFFFF
       r = ((reg .&. lim) - (v .&. lim)) .&. lim
@@ -638,7 +668,7 @@ cmpReg c eight reg v = do
 data Alu = ORA | AND | EOR | ADC | LDA | CMP | SBC | BIT | LDX | LDY | CPX | CPY
   deriving stock (Eq)
 
-aluOp :: Cpu s -> Alu -> Mode -> ST s ()
+aluOp :: CpuBus b => Cpu b s -> Alu -> Mode -> ST s ()
 aluOp c op mode = do
   idx <- x8 c
   acc8 <- m8 c
@@ -667,7 +697,7 @@ aluOp c op mode = do
 data Shift = ASL | LSR | ROL | ROR | INC | DEC | TSB | TRB
   deriving stock (Eq)
 
-shiftOp :: Cpu s -> Shift -> Bool -> Int -> ST s Int
+shiftOp :: CpuBus b => Cpu b s -> Shift -> Bool -> Int -> ST s Int
 shiftOp c op eight v = do
   cf <- flag c flagC
   let top = if eight then 0x80 else 0x8000
@@ -687,10 +717,10 @@ shiftOp c op eight v = do
     TRB -> do a <- getAcc c eight; setFlag c flagZ (a .&. v == 0); pure (v .&. complement a .&. lim)
 
 -- | A one-byte instruction: the opcode, then an internal cycle at PC.
-implied :: Cpu s -> ST s () -> ST s ()
+implied :: CpuBus b => Cpu b s -> ST s () -> ST s ()
 implied c f = ioPC c >> f
 
-store :: Cpu s -> Int -> Mode -> ST s ()
+store :: CpuBus b => Cpu b s -> Int -> Mode -> ST s ()
 store c ri mode = do
   eight <- if ri == iX || ri == iY then x8 c else m8 c
   v <- if ri == -1 then pure 0 else g c ri
@@ -698,10 +728,10 @@ store c ri mode = do
 
 -- | Sets P: emulation mode keeps M and X; X set clears the index
 -- registers' high bytes.
-setP :: Cpu s -> Int -> ST s ()
+setP :: CpuBus b => Cpu b s -> Int -> ST s ()
 setP c p = s c iP (p .&. 0xFF) >> normalise c
 
-branch :: Cpu s -> Bool -> ST s ()
+branch :: CpuBus b => Cpu b s -> Bool -> ST s ()
 branch c taken = do
   off <- fetch c
   when taken $ do
@@ -714,7 +744,7 @@ branch c taken = do
 
 -- | The interrupt sequence's pushes and vector (BRK and COP after their
 -- signature byte, a hardware interrupt after its two internal cycles).
-interrupt :: Cpu s -> Int -> Int -> Bool -> ST s ()
+interrupt :: CpuBus b => Cpu b s -> Int -> Int -> Bool -> ST s ()
 interrupt c vecNative vecEmu brk = do
   e <- emu c
   unless e (g c iPBR >>= push c)
@@ -732,15 +762,15 @@ interrupt c vecNative vecEmu brk = do
   s c iPC (lo .|. hi `shiftL` 8)
 
 -- | One instruction, interrupt sequence, or stopped cycle.
-step :: Cpu s -> ST s Step
+step :: CpuBus b => Cpu b s -> ST s Step
 step c = do
   run <- g c iRun
   case run of
-    2 -> busStopped (cpuBus c) >> endCycle c >> pure Stop
+    2 -> cbStopped (cpuBus c) >> endCycle c >> pure Stop
     1 -> do
-      busStopped (cpuBus c)
+      cbStopped (cpuBus c)
       endCycle c
-      irq <- busIrq (cpuBus c)
+      irq <- cbIrq (cpuBus c)
       nmi <- g c iNmiNeed
       when (irq || nmi /= 0) $ do
         s c iRun 0
@@ -773,7 +803,7 @@ step c = do
 -- | /RES: emulation mode, the registers as 'resetRegs' leaves them (A, X's
 -- and Y's low bytes kept), then the vector at 00FFFCh (two internal
 -- cycles first, *to verify* the cycle count against the data sheet at 7.3).
-reset :: Cpu s -> ST s ()
+reset :: CpuBus b => Cpu b s -> ST s ()
 reset c = do
   s c iE 1
   s c iD 0
@@ -790,7 +820,7 @@ reset c = do
   hi <- rd c KVector 0xFFFD
   s c iPC (lo .|. hi `shiftL` 8)
 
-execute :: Cpu s -> Int -> ST s ()
+execute :: CpuBus b => Cpu b s -> Int -> ST s ()
 execute c op
   -- the ALU column (the 6502's cc = 01 and the 65816's modes beside it):
   -- the row is the operation, the low five bits the mode; row 4 is STA
@@ -831,7 +861,7 @@ execute c op
     0x1D -> AbsX
     _ -> LongX
 
-execOther :: Cpu s -> Int -> ST s ()
+execOther :: CpuBus b => Cpu b s -> Int -> ST s ()
 execOther c op = case op of
   0x89 -> aluOp c BIT Imm
   -- stores
@@ -1185,5 +1215,5 @@ execOther c op = case op of
     when (a' /= 0xFFFF) $ g c iPC >>= s c iPC . (\pc -> (pc - 3) .&. 0xFFFF)
 
 -- | The 65816's whole state for a save state (Q.8, "Platform.Snapshot").
-cpuFields :: Cpu s -> [Field s]
+cpuFields :: CpuBus b => Cpu b s -> [Field s]
 cpuFields c = [FInt (cpuState c)]

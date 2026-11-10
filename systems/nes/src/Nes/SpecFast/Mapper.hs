@@ -56,6 +56,7 @@ module Nes.SpecFast.Mapper
   , mapperCpuRead
   , mapperPpuReg
   , prgRamRead
+  , mapperPrgRam
   , mapperA12
   , mapperCycle
   , mapperIrq
@@ -208,6 +209,11 @@ cpuReadCart m a
   | otherwise = pure (-1)
 
 -- | PRG RAM without side effects (test hooks).
+-- | The cartridge's PRG RAM ($6000-$7FFF, the MMC5's 64 KiB), if it has
+-- any: what a battery keeps (side track W: the page's battery saves).
+mapperPrgRam :: Mapper s -> Maybe (MV.MVector s Word8)
+mapperPrgRam m = if mpHasRam m then Just (mpPrgRam m) else Nothing
+
 prgRamRead :: Mapper s -> Word16 -> ST s Word8
 prgRamRead m a = MV.unsafeRead (mpPrgRam m) (fromIntegral a .&. 0x1FFF)
 

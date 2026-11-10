@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-|
 The Super Nintendo on the Arty Z7-20 (PLAN.md step 7.10;
 docs/systems/snes.md): "Snes.Machine" with the picture on HDMI OUT, the
@@ -66,7 +67,11 @@ topEntity clk125 psResetN btnRaw swRaw psRaw arReady rValid rData' rResp' rLast'
         ps = psGpio <$> synchronise 0 psRaw
         s2m = (\a v dat rsp lst -> AxiRdS2M (a == 1) (if v == 1 then Just (AxiR dat rsp (lst == 1)) else Nothing))
                 <$> arReady <*> rValid <*> rData' <*> rResp' <*> rLast'
+#ifdef SNES_STATES_NONE
+        m = snesMachine NoStateHooks pad ps s2m
+#else
         m = snesMachine WithStateHooks pad ps s2m
+#endif
         beat = heartbeat (SNat @(MsToCycles DomPix 500))
         status = (\f late b -> (if f then 0x1 else 0) .|. (if late /= 0 then 0x2 else 0) .|. (if b then 0x8 else 0) :: BitVector 4)
                    <$> snFrame m <*> snLate m <*> beat

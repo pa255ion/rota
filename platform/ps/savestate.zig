@@ -64,7 +64,47 @@ pub const Spec = struct {
     /// loading through the CPU (L.6c): the record is a table the PL only
     /// reads, turned into a routine for the core's ROM overlay
     restore: ?Restore = null,
+    /// the same system's other build (M7 7.15d: the Super Nintendo's
+    /// SNES_STATES=cpu bitstream), used when the PL's status says
+    /// `alt_version` (`pick`); null: the version is never read
+    alt: ?*const Spec = null,
+    alt_version: u8 = 0,
 };
+
+/// The Spec for the PL's layout version (`Spec.alt`): the spec itself
+/// without an alt, for another version or none (a read that failed).
+pub fn pick(spec: Spec, version: ?u8) Spec {
+    const a = spec.alt orelse return spec;
+    const v = version orelse return spec;
+    return if (v == spec.alt_version) a.* else spec;
+}
+
+/// The PL's layout version without freezing the core (the status read
+/// with the state mode left off; `freeze` turns it on), for `pick`; null
+/// if the PL doesn't answer. Not read for a spec without an alt.
+pub fn versionNow(link: anytype, spec: Spec, sv: menu.Save) ?u8 {
+    if (spec.alt == null) return null;
+    link.write(sv.ctrl_addr, &.{1});
+    defer link.write(sv.ctrl_addr, &.{0});
+    var toggle = link.inputs().toggle;
+    var st: [4]u8 = undefined;
+    readBytes(link, spec, spec.status, &st, &toggle) catch return null;
+    return st[3];
+}
+
+/// The largest work buffer a load through the CPU needs among `specs`
+/// (their alts too; 0 without one), for the caller's buffer.
+pub fn maxWork(comptime specs: []const ?Spec) usize {
+    var n: usize = 0;
+    for (specs) |o| {
+        const s = o orelse continue;
+        if (s.restore) |r| n = @max(n, r.work());
+        if (s.alt) |a| {
+            if (a.restore) |r| n = @max(n, r.work());
+        }
+    }
+    return n;
+}
 
 /// A system whose states load through its CPU (Spec.restore).
 pub const Restore = struct {
@@ -841,6 +881,39 @@ test "clearSections: every section zeroed through the window, frozen; nothing el
     try testing.expectEqual(@as(u8, 0xAA), a.space[0x1080]);
     try testing.expectEqual(@as(u8, 0xAA), a.space[0x6000]);
     try testing.expectEqual(@as(u32, 0), a.refused);
+}
+
+test "pick and versionNow: an alt by the PL's version, never frozen; without an alt or an answer, the spec itself" {
+    const alt: Spec = .{ .mode_addr = gb.mode_addr, .wbase = gb.wbase, .rbase = gb.rbase, .status = gb.status, .sections = &.{}, .cram = gbCram };
+    const two: Spec = comptime blk: {
+        var t = gb;
+        t.alt = &alt;
+        t.alt_version = 4;
+        break :blk t;
+    };
+    // pick
+    try testing.expectEqual(@as(usize, 0), pick(two, 4).sections.len);
+    try testing.expectEqual(gb.sections.len, pick(two, 3).sections.len);
+    try testing.expectEqual(gb.sections.len, pick(two, null).sections.len);
+    try testing.expectEqual(gb.sections.len, pick(gb, 4).sections.len);
+    // versionNow: the status read with the state mode off, the read-back off after
+    var a: Model = .{ .version = 4 };
+    var la: pl.Link(Model) = .{ .port = &a };
+    try testing.expectEqual(@as(?u8, 4), versionNow(&la, two, gbSave));
+    try testing.expect(!a.mode and !a.read_back);
+    // a spec without an alt: nothing read
+    var b: Model = .{ .version = 4, .answers = 0 };
+    var lb: pl.Link(Model) = .{ .port = &b };
+    try testing.expectEqual(@as(?u8, null), versionNow(&lb, gb, gbSave));
+    try testing.expect(!b.read_back and b.addr == 0);
+    // a PL that doesn't answer: null, so the spec itself
+    var c: Model = .{ .version = 4, .answers = 0 };
+    var lc: pl.Link(Model) = .{ .port = &c };
+    const v = versionNow(&lc, two, gbSave);
+    try testing.expectEqual(@as(?u8, null), v);
+    try testing.expectEqual(gb.sections.len, pick(two, v).sections.len);
+    // the work buffer: the largest of the specs and their alts
+    try testing.expectEqual(gb.restore.?.work(), maxWork(&.{ null, gb, two }));
 }
 
 test "not frozen: an error after the tries, nothing written" {

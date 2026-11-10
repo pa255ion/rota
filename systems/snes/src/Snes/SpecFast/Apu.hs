@@ -28,6 +28,7 @@ module Snes.SpecFast.Apu
   , apuFields
   , newApu
   , apuCycles
+  , apuRebase
   , runApuTo
   , apuPortRead
   , apuPortWrite
@@ -51,7 +52,7 @@ import qualified Data.Vector.Unboxed.Mutable as MV
 import Platform.Snapshot (Field (..))
 import Data.Word
 
-import Snes.Spec.Dsp
+import Snes.SpecFast.Dsp
 import Snes.SpecFast.Spc700 (Bus (..), Cpu)
 import qualified Snes.SpecFast.Spc700 as Spc
 import Spc700.Types (Regs (..))
@@ -113,6 +114,12 @@ get a = MV.unsafeRead (aSt a)
 set :: Apu s -> Int -> Int -> ST s ()
 set a = MV.unsafeWrite (aSt a)
 
+-- | The cycle count moved back by @d@, a multiple of 128 (the machine's
+-- rebase: WebAssembly's Int is 32 bits); the timers and the DSP's samples
+-- use it only modulo 16, 32 and 128.
+apuRebase :: Apu s -> Int -> ST s ()
+apuRebase a d = get a sCycles >>= set a sCycles . subtract d
+
 apuCycles :: Apu s -> ST s Int
 apuCycles a = get a sCycles
 
@@ -173,7 +180,7 @@ apuCycle a = do
   when (n .&. 15 == 0) (timer 2)
   when (n .&. 127 == 0) (timer 0 >> timer 1)
   when (n .&. 31 == 0) $ do
-    (l, r) <- dspSample (aDsp a) (\i -> MV.read (aRam a) i) (\i v -> MV.write (aRam a) i v)
+    (l, r) <- dspSample (aDsp a) (aRam a)
     record a (EvSample n l r)
     (buf, k) <- readSTRef (aSamples a)
     buf' <- if 2 * k + 2 > MV.length buf then MV.grow buf (MV.length buf) else pure buf

@@ -32,16 +32,19 @@ balance is unmeasured, *to tune* by ear on the board).
 module Sms.SpecFast.FmUnit
   ( newFmUnit
   , newFmUnitFields
+  , newFmUnitRebase
   ) where
 
 import Prelude
 
-import Data.Bits (testBit, (.&.))
+import Control.Monad (when)
+import Data.Bits (shiftL, testBit, (.&.))
 import Data.STRef
 import Control.Monad.ST (ST)
 import Data.Word (Word8)
 
 import Gg.Spec (FmUnit (..))
+import Gg.SpecFast (rebaseT)
 import Sms.Spec.FmUnit (fmGain)
 import Sms.SpecFast.Fm
 import Platform.Snapshot (Field (..))
@@ -52,24 +55,43 @@ newFmUnit = fst <$> newFmUnitFields
 -- | The same, with its state for a save state (Q.8, "Platform.Snapshot":
 -- the machine sees the unit only through its calls).
 newFmUnitFields :: ST s (FmUnit s, [Field s])
-newFmUnitFields = do
+newFmUnitFields = newFmUnitRebase True
+
+-- | The same, the FM's own clock rebased ('fmRebase') or not (sms-rebase's
+-- twin, on 64 bits).
+newFmUnitRebase :: Bool -> ST s (FmUnit s, [Field s])
+newFmUnitRebase on = do
   fm <- newFm
+  fmSetRebase fm on
   ctl <- newSTRef (0 :: Word8)
   level <- newSTRef 0
+  -- (side track W: the machine's T-states go back by 'rebaseT' now and
+  -- then, and the FM's cycles by its own period ('fmRebase'): the FM's
+  -- cycle is t / 4 plus 'base', which follows both; 32 bits never overflow)
+  lastT <- newSTRef 0
+  base <- newSTRef 0
+  let cycleOf t = do
+        l <- readSTRef lastT
+        when (t < l - 1 `shiftL` 20) (modifySTRef' base (+ (rebaseT `div` 4)))
+        writeSTRef lastT t
+        d <- fmRebase fm
+        when (d /= 0) (modifySTRef' base (subtract d))
+        (+ t `div` 4) <$> readSTRef base
   -- (side track Q: the level is the last completed sample's mix, kept by
   -- the fast FM itself, as the reference's last pins' 'fmMix'; no list)
-  let catchUp t = do
-        fmRunTo fm (t `div` 4)
+      catchUp c = do
+        fmRunTo fm c
         fmLastMix fm >>= writeSTRef level
-  pure . (\u -> (u, fmFields fm <> [FRef ctl, FRef level])) $ FmUnit
+  pure . (\u -> (u, fmFields fm <> [FRef ctl, FRef level, FRef lastT, FRef base])) $ FmUnit
     { fuWrite = \t port v -> do
-        catchUp t
+        c <- cycleOf t
+        catchUp c
         if port == 0xF2
           then writeSTRef ctl (v .&. 3)
-          else fmWrite fm (t `div` 4) (fromIntegral port .&. 1) v
+          else fmWrite fm c (fromIntegral port .&. 1) v
     , fuRead = \_ -> (.&. 3) <$> readSTRef ctl
     , fuLevel = \t -> do
-        catchUp t
+        cycleOf t >>= catchUp
         c <- readSTRef ctl
         if testBit c 0 then (* fmGain) <$> readSTRef level else pure 0
     , fuPsgOn = (\c -> testBit c 1 == testBit c 0) <$> readSTRef ctl

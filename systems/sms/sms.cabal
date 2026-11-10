@@ -111,6 +111,23 @@ test-suite sms-specfast
     tasty,
     tasty-hunit
 
+-- Side track W: the fast version's clocks rebased (Gg.SpecFast.rebase,
+-- Sms.SpecFast.Fm.fmRebase; the browser's Int is 32 bits) against a twin
+-- without it, on 64 bits: the same pictures and sound.
+test-suite sms-rebase
+  import:           clash-common
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Rebase.hs
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N4 -M2g" -O2
+  build-depends:
+    sms,
+    gg,
+    bytestring,
+    vector,
+    tasty,
+    tasty-hunit
+
 -- Side track Q (PLAN.md Q.7): where the reference model's time goes.
 executable sms-fast-bench
   import:           clash-common

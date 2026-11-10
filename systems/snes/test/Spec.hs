@@ -7,6 +7,7 @@
 -- and no FAIL, a frame is 357,368 master clocks (357,364 every other).
 module Main (main) where
 
+import SpecRestore (restoreTests)
 import Prelude
 
 import Control.Monad (forM, unless)
@@ -26,6 +27,7 @@ import qualified Data.Vector.Unboxed as U
 
 import DisplayTest
 import DspTest
+import Upd77c25Test
 import Snes.Cart
 import Snes.Spec
 
@@ -37,7 +39,10 @@ romDir = "../../roms/snes"
 iplFile = "../../build/snes/ipl.bin"
 
 main :: IO ()
-main = defaultMain $ testGroup "snes-spec"
+main = do
+ rt <- restoreTests
+ dsp1 <- upd77c25Tests
+ defaultMain $ testGroup "snes-spec" $ (<> [rt, dsp1])
   [ testGroup "cartridge header"
       [ testCase "lorom.sfc: LoRom, 32 KiB, checksum good" $ do
           c <- cart (asmDir </> "lorom.sfc")

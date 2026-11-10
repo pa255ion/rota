@@ -21,6 +21,7 @@ module Snes.Spec.Apu
   ( Apu
   , newApu
   , apuCycles
+  , apuCopy
   , runApuTo
   , apuPortRead
   , apuPortWrite
@@ -97,6 +98,22 @@ newApu ipl = do
         hi = ipl U.! 0x3F
     cpu <- Spc.newCpu bus (Regs 0 0 0 0 (fromIntegral lo .|. fromIntegral hi `shiftL` 8) 0)
     pure (Apu ram ipl dsp st samples cpu trace)
+
+-- | The first module's whole state made the second's: ARAM, the DSP, the
+-- timers and ports, the SPC700 (each keeps its own boot ROM and bus); the
+-- samples made so far are not moved (step 7.15: the spec's restore test
+-- moves the sound module whole until the SPC700's routine, 7.15b).
+apuCopy :: Apu s -> Apu s -> ST s ()
+apuCopy from to = do
+  MV.copy (aRam to) (aRam from)
+  MV.copy (aSt to) (aSt from)
+  let df = aDsp from
+      dt = aDsp to
+  MV.copy (dRegs dt) (dRegs df)
+  MV.copy (dVoice dt) (dVoice df)
+  MV.copy (dSt dt) (dSt df)
+  MV.copy (dFir dt) (dFir df)
+  Spc.cpuCopy (aCpu from) (aCpu to)
 
 get :: Apu s -> Int -> ST s Int
 get a = MV.unsafeRead (aSt a)

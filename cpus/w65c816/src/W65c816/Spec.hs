@@ -64,6 +64,8 @@ module W65c816.Spec
   , reset
   , Run (..)
   , cpuRun
+    -- * Save states (the SNES, step 7.15)
+  , cpuLines
   ) where
 
 import Prelude
@@ -193,6 +195,14 @@ cpuCycles c = g c iCyc
 
 cpuRun :: Cpu s -> ST s Run
 cpuRun c = (\r -> case r of 0 -> Running; 1 -> Waiting; _ -> Stopped) <$> g c iRun
+
+-- | Between instructions, beyond the registers: WAI/STP (0 running, 1
+-- waiting, 2 stopped), the NMI line at the last cycle's end, an NMI edge
+-- not yet serviced, the interrupt polls at the last cycle's end and the
+-- one before it, and the poll the last instruction ended with (bit 0 NMI,
+-- bit 1 IRQ). A save state's table keeps them (the SNES, step 7.15).
+cpuLines :: Cpu s -> ST s (Int, Int, Int, Int, Int, Int)
+cpuLines c = (,,,,,) <$> g c iRun <*> g c iNmiLine <*> g c iNmiNeed <*> g c iPollCur <*> g c iPollPrev <*> g c iPending
 
 -- | What a 'step' did.
 data Step

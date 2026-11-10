@@ -138,6 +138,23 @@ pub fn build(b: *std.Build) void {
     const nes_restore_step = b.step("nes-restore", "the NES's restore routine for a state table (prefix/host/nes-restore)");
     nes_restore_step.dependOn(&b.addInstallFileWithDir(nes_restore.getEmittedBin(), .prefix, "host/nes-restore").step);
 
+    // snes-restore (M7 step 7.15a): the Super Nintendo's restore routine
+    // for a state table, for snes-spec (platform/ps/systems/snes_restore.zig)
+    const snes_restore = b.addExecutable(.{
+        .name = "snes-restore",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("platform/host/snes_restore_tool.zig"),
+            .target = host,
+            .optimize = .ReleaseSafe,
+            .imports = &.{.{ .name = "snes_restore", .module = b.createModule(.{
+                .root_source_file = b.path("platform/ps/systems/snes_restore.zig"),
+                .target = host,
+            }) }},
+        }),
+    });
+    const snes_restore_step = b.step("snes-restore", "the Super Nintendo's restore routine for a state table (prefix/host/snes-restore)");
+    snes_restore_step.dependOn(&b.addInstallFileWithDir(snes_restore.getEmittedBin(), .prefix, "host/snes-restore").step);
+
     // --- the Clash 68000's Verilator model (side track P, P.5) -----------
     // Make builds the model (Vm68k__ALL.a, libverilated.a, the vm68k.cpp
     // shim's vm68k.o) in its M68K_SIM_OBJ and passes that directory:
@@ -268,6 +285,7 @@ pub fn build(b: *std.Build) void {
         .{ "platform/ps/systems/gg_restore.zig", &.{} },
         .{ "platform/ps/systems/a800_restore.zig", &.{} },
         .{ "platform/ps/systems/nes_restore.zig", &.{} },
+        .{ "platform/ps/systems/snes_restore.zig", &.{} },
         .{ "platform/ps/systems/a800xl_cas.zig", &.{} },
         .{ "platform/ps/pcap.zig", &.{} },
         .{ "platform/ps/mmu.zig", &.{} },

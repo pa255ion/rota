@@ -5,7 +5,9 @@
 ; NMI and IRQ (both modes) count in NMICOUNT (7E0002h) and IRQCOUNT
 ; (7E0003h); the IRQ handler acknowledges (reads 4211h) and keeps what it
 ; read in IRQFLAG (7E0004h). Reset clears them. A ROM that defines SRAM
-; before including this file has 8 KiB of battery SRAM (type 02h).
+; before including this file has 8 KiB of battery SRAM (type 02h); one that
+; defines DSP is a DSP cartridge (type 03h, ROM + DSP: the DSP-1's DR at
+; 30:8000h, SR at 30:C000h; step 7.16).
 ;
 ; The verdict convention, as the Game Gear's: RESULT (WRAM 7E0000h) is 00h
 ; while the test runs; at the end it is 01h (pass) or 80h + n (check n
@@ -55,8 +57,13 @@ ROMSIZE $05
 CARTRIDGETYPE $02
 SRAMSIZE $03
 .ELSE
+.IFDEF DSP
+CARTRIDGETYPE $03
+SRAMSIZE $00
+.ELSE
 CARTRIDGETYPE $00
 SRAMSIZE $00
+.ENDIF
 .ENDIF
 COUNTRY $01
 LICENSEECODE $00

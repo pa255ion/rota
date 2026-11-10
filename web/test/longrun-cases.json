@@ -1,0 +1,226 @@
+{
+ "gg": {
+  "lib": "sms",
+  "args": [
+   [
+    "file",
+    "roms/gg/games/waternet.gg"
+   ],
+   0,
+   0,
+   [
+    "null"
+   ],
+   0
+  ],
+  "frame": "u32",
+  "size": null
+ },
+ "sms": {
+  "lib": "sms",
+  "args": [
+   [
+    "file",
+    "roms/sms/games/raposadosol_v20.sms"
+   ],
+   1,
+   1,
+   [
+    "null"
+   ],
+   0
+  ],
+  "frame": "u32",
+  "size": null
+ },
+ "gb": {
+  "lib": "gb",
+  "args": [
+   [
+    "file",
+    "roms/gb/dmg-acid2/dmg-acid2.gb"
+   ],
+   0
+  ],
+  "frame": "u8",
+  "size": [
+   160,
+   144
+  ],
+  "wasm_args": [
+   [
+    "file",
+    "roms/gb/dmg-acid2/dmg-acid2.gb"
+   ],
+   2
+  ]
+ },
+ "gbc": {
+  "lib": "gb",
+  "args": [
+   [
+    "file",
+    "roms/gbc/cgb-acid2/cgb-acid2.gbc"
+   ],
+   1
+  ],
+  "frame": "u8",
+  "size": [
+   160,
+   144
+  ],
+  "wasm_args": [
+   [
+    "file",
+    "roms/gbc/cgb-acid2/cgb-acid2.gbc"
+   ],
+   3
+  ]
+ },
+ "chip8": {
+  "lib": "chip8",
+  "args": [
+   [
+    "file",
+    "roms/chip8/timendus/3-corax+.ch8"
+   ],
+   0,
+   200
+  ],
+  "frame": "u16",
+  "size": [
+   64,
+   32
+  ]
+ },
+ "nes": {
+  "lib": "nes",
+  "args": [
+   [
+    "file",
+    "roms/nes/nestest/nestest.nes"
+   ],
+   0
+  ],
+  "frame": "u8",
+  "size": [
+   256,
+   240
+  ]
+ },
+ "a800": {
+  "lib": "a800",
+  "args": [
+   [
+    "file",
+    "roms/a800xl/os/altirraos_xl.rom"
+   ],
+   [
+    "file",
+    "roms/a800xl/os/altirra_basic.rom"
+   ],
+   [
+    "file",
+    "build/a800xl/xexload.bin"
+   ],
+   [
+    "file",
+    "build/a800xl/asm/rasterbars.xex"
+   ],
+   1,
+   0
+  ],
+  "frame": "keys",
+  "size": [
+   320,
+   240
+  ]
+ },
+ "snes": {
+  "lib": "snes",
+  "args": [
+   [
+    "file",
+    "build/snes/ipl.bin"
+   ],
+   [
+    "file",
+    "roms/snes/games/unnamed-tech-demo-v3.sfc"
+   ],
+   0,
+   0
+  ],
+  "frame": "u32",
+  "size": [
+   512,
+   478
+  ]
+ },
+ "nes-perf": {
+  "lib": "nes",
+  "args": [
+   [
+    "file",
+    "roms/nes/homebrew/thwaite.nes"
+   ],
+   2
+  ],
+  "frame": "u8",
+  "size": [
+   256,
+   240
+  ]
+ },
+ "nes-mmc3": {
+  "lib": "nes",
+  "args": [
+   [
+    "file",
+    "roms/nes/games/local/mmc3-game.nes"
+   ],
+   2
+  ],
+  "frame": "u8",
+  "size": [
+   256,
+   240
+  ]
+ },
+ "gbc-game": {
+  "lib": "gb",
+  "args": [
+   [
+    "file",
+    "roms/gbc/games/local/Mega Man Xtreme.gbc"
+   ],
+   1
+  ],
+  "wasm_args": [
+   [
+    "file",
+    "roms/gbc/games/local/Mega Man Xtreme.gbc"
+   ],
+   3
+  ],
+  "frame": "u8",
+  "size": [
+   160,
+   144
+  ]
+ },
+ "nes-mmc5": {
+  "lib": "nes",
+  "args": [
+   [
+    "file",
+    "roms/nes/mmc5/mmc5test_v2.nes"
+   ],
+   2
+  ],
+  "frame": "u8",
+  "size": [
+   256,
+   240
+  ]
+ }
+}

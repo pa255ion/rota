@@ -58,6 +58,9 @@ module W65c816.Core
   , cpuCycle
   , cpuRegs
   , decode
+    -- (the SNES's save states, step 7.15c: an instruction's final
+    -- registers in its 'StDone' clock)
+  , finished
   ) where
 
 import Clash.Prelude
@@ -314,6 +317,12 @@ v24 :: Vec 3 (Unsigned 8) -> Unsigned 24
 v24 v = w24 (v !! (2 :: Int)) (v16 v)
 
 -- | Emulation mode's invariants, and the 8-bit index registers' high bytes.
+-- | The registers as the instruction leaves them: in its 'StDone' clock
+-- 'finishOp' (with 'normalise') hasn't been applied yet, the clock after it
+-- has; anywhere else the record as it is.
+finished :: Cpu -> Cpu
+finished c = if cStage c == StDone then normalise (finishOp c) else c
+
 normalise :: Cpu -> Cpu
 normalise c0 =
   let c1 = if cE c0 then c0 { cP = cP c0 .|. 0x30, cS = 0x100 .|. (cS c0 .&. 0xFF) } else c0

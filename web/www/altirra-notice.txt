@@ -1,0 +1,22 @@
+The Atari 800XL on this page boots AltirraOS and Altirra BASIC, Avery Lee's
+replacements for Atari's OS and BASIC ROMs (part of the Altirra emulator,
+https://www.virtualdub.org/altirra.html). The files altirraos_xl.rom and
+altirra_basic.rom here are the bytes of the C arrays the atari800 emulator
+builds in (github.com/atari800/atari800, src/roms/, commit d722329), under
+these notices:
+
+altirraos_xl.c - XL/XE/XEGS OS ROM replacement
+Compiled from the sources in the emuos folder.
+Altirra - Atari 800/800XL emulator
+Kernel ROM replacement, version 3.11
+Copyright (C) 2008-2018 Avery Lee
+
+altirra_basic.c - BASIC ROM replacement
+Compiled from the sources in the emuos folder.
+Altirra BASIC, version 1.58
+Copyright (C) 2008-2022 Avery Lee
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.  This file is offered as-is,
+without any warranty.

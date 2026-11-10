@@ -1,4 +1,5 @@
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE LambdaCase #-}
 {-|
 The Super Nintendo without its video and sound (PLAN.md step 7.3;
 docs/systems/snes.md): the 5A22 (the 65C816 of "W65c816.Spec", its memory
@@ -33,8 +34,21 @@ byte (*to verify*). HDMA's own cost: 18 clocks, 8 per channel, 8 per
 byte, 16 per indirect address.
 -}
 module Snes.Spec.Machine
-  ( Machine
+  ( Machine (..)
+  , Overlay (..)
+  -- (step 7.15, "Snes.Spec.SaveState": the state slots)
+  , slotGet
+  , slotSet
+  , sMc, sHc, sVc, sField, sFrames, sMdr, sNmitimen, sRdnmi, sTimeup, sWrio
+  , sMpya, sMpyb, sDiv, sDivb, sHtime, sVtime, sDmaPending, sHdmaen, sMemsel, sRddiv
+  , sRdmpy, sMpyCtr, sDivCtr, sShift, sJoyBase, sPad1, sPad2, sJoyBusyUntil, sStrobe
+  , sSer1, sSer2, sVaddr, sVmain, sVlatch, sCgadd, sCgLatch, sCgFlip, sOamadd, sOamLatch
+  , sOamRel, sWmadd, sHdmaDo, sHdmaDone, sHlatch, sVlatch2, sLatched, sM7Prev, sFrameStart
+  , sHflip, sVflip, sBgPrev, sSprBusy, sBgPrev2, sApuPhase, sApuBase, sCount
+  , vblankStart
+  , lineLength
   , newMachine
+  , attachDsp
   , reset
   , stepCpu
   , runFrames
@@ -81,6 +95,7 @@ import Snes.Cart (Cart (..), Mapping (..), stripCopier)
 import Snes.Spec.Apu
 import Snes.Spec.Map
 import Snes.Spec.Ppu
+import qualified Snes.Spec.Upd77c25 as U77
 import W65c816.Spec (Bus (..), Kind (..), Cpu, Run (..))
 import qualified W65c816.Spec as Cpu
 import W65c816.Types (Regs (..), resetRegs)
@@ -102,13 +117,33 @@ data Machine s = Machine
   , mCpu     :: !(Cpu s)
   , mTrace   :: !(STRef s (Maybe [PpuEvent]))   -- ^ newest first, while tracing
   , mBusTrace :: !(STRef s (Maybe [BusEvent]))  -- ^ newest first, while tracing
+  , mOverlay :: !(STRef s (Maybe Overlay))      -- ^ a save state's ROM overlay while armed (step 7.15)
+  , mDsp     :: !(STRef s (Maybe DspChip))      -- ^ a DSP cartridge's chip ('attachDsp', step 7.16b)
   }
+
+-- | A DSP cartridge's µPD77C25 ("Snes.Spec.Upd77c25"): its firmware, its
+-- state, and the instructions it has run (it runs on its own 7.6 MHz
+-- crystal: 1672 / 4725 of the master clock, caught up at each access).
+data DspChip = DspChip !U77.Firmware !U77.Upd !Int
 
 -- | The 5A22's bus work at its master clock, for the machine's lockstep
 -- test ("snes-core", step 7.9): the CPU's cycles (a read and its value, a
 -- write, an internal or stopped cycle), DMA's and HDMA's bytes (the A-bus
 -- address, the B-bus register, the value, to the A bus?), HDMA's table
 -- reads.
+-- | A save state's ROM overlay (step 7.15, "Snes.Spec.SaveState"): while
+-- armed it answers the CPU's reads of bank 00h, 8000h-FFFFh (its bytes mod
+-- 800h: the routine, the vectors) and 0000h-1FFFh (mod 800h with bit 10
+-- inverted: the stack bytes the routine pulls, which near 1FFFh would
+-- otherwise fall on the vectors), and goes off once the instruction that
+-- read the end address has finished. The DMA's reads and the CPU's
+-- writes go where they always do.
+data Overlay = Overlay
+  { ovBytes :: !(U.Vector Word8)
+  , ovEnd   :: !Int
+  , ovSeen  :: !Bool
+  }
+
 data BusEvent
   = BeRead !Int !Int !Word8
   | BeWrite !Int !Int !Word8
@@ -138,7 +173,7 @@ sMc, sHc, sVc, sField, sFrames, sMdr, sNmitimen, sRdnmi, sTimeup, sWrio,
   sJoyBusyUntil, sStrobe, sSer1, sSer2, sVaddr, sVmain, sVlatch, sCgadd,
   sCgLatch, sCgFlip, sOamadd, sOamLatch, sOamRel, sWmadd,
   sHdmaDo, sHdmaDone, sHlatch, sVlatch2, sLatched, sM7Prev, sFrameStart, sHflip, sVflip, sBgPrev,
-  sSprBusy, sBgPrev2,
+  sSprBusy, sBgPrev2, sApuPhase, sApuBase,
   sCount :: Int
 sMc = 0
 sHc = 1
@@ -193,7 +228,12 @@ sVflip = 45
 sBgPrev = 46
 sSprBusy = 59    -- 1 from master clock 1120 to the line's end while the sprite unit runs
 sBgPrev2 = 60    -- the HOFS writes' own byte latch (bsnes's bgofsPPU2)
-sCount = 61
+-- (step 7.15: the sound module's clock against the master clock, for a
+-- state restored into a machine whose master clock is another: added to
+-- mc × 5632 before the division, and to its result; 0 from power-on)
+sApuPhase = 61
+sApuBase = 62
+sCount = 63
 
 -- | A machine for a boot ROM for the SPC700 (64 bytes), a cartridge (its
 -- parsed header) and the ROM file.
@@ -219,7 +259,9 @@ newMachine ipl cart file = do
     cpu <- Cpu.newCpu Cpu.w65c816 (busFor m) resetRegs
     tr <- newSTRef Nothing
     btr <- newSTRef Nothing
-    pure (Machine rom (cartMapping cart) (cartSramSize cart) wram sram vram cg oam ppu dma st apu picture cpu tr btr)
+    ovl <- newSTRef Nothing
+    dsp <- newSTRef Nothing
+    pure (Machine rom (cartMapping cart) (cartSramSize cart) wram sram vram cg oam ppu dma st apu picture cpu tr btr ovl dsp)
  where
   busFor m = Bus
     { busRead = \k _ a -> cpuRead m k (fromIntegral a)
@@ -229,6 +271,12 @@ newMachine ipl cart file = do
     , busNmi = nmiLine m
     , busIrq = (/= 0) <$> get m sTimeup
     }
+
+slotGet :: Machine s -> Int -> ST s Int
+slotGet = get
+
+slotSet :: Machine s -> Int -> Int -> ST s ()
+slotSet = set
 
 get :: Machine s -> Int -> ST s Int
 get m = MV.unsafeRead (mSt m)
@@ -292,7 +340,13 @@ cpuRegs m = Cpu.getRegs (mCpu m)
 
 -- | The CPU's next instruction (or interrupt, or stopped cycle).
 stepCpu :: Machine s -> ST s ()
-stepCpu m = () <$ Cpu.step (mCpu m)
+stepCpu m = do
+  _ <- Cpu.step (mCpu m)
+  -- (a save state's overlay: off after the instruction that read its end)
+  o <- readSTRef (mOverlay m)
+  case o of
+    Just ov | ovSeen ov -> writeSTRef (mOverlay m) Nothing
+    _ -> pure ()
 
 cpuStopped :: Machine s -> ST s Bool
 cpuStopped m = (== Stopped) <$> Cpu.cpuRun (mCpu m)
@@ -352,7 +406,9 @@ apuOf = mApu
 syncApu :: Machine s -> ST s ()
 syncApu m = do
   mc <- get m sMc
-  runApuTo (mApu m) ((mc * 5632) `div` 118125)
+  ph <- get m sApuPhase
+  base <- get m sApuBase
+  runApuTo (mApu m) ((mc * 5632 + ph) `div` 118125 + base)
 
 -- | BG1's first 32 × 32 tilemap as text: each entry's tile number's low
 -- byte as a character (the test ROMs' fonts are ASCII), others as spaces.
@@ -548,7 +604,13 @@ cpuRead m _ a = do
   ms <- get m sMemsel
   let sp = speed (ms /= 0) a
   tick m (sp - 4)
-  v <- busReadA m a
+  ov <- readSTRef (mOverlay m)
+  v <- case ov of
+    Just o | a `shiftR` 16 == 0, let a16 = a .&. 0xFFFF, a16 < 0x2000 || a16 >= 0x8000 -> do
+      when (a16 == ovEnd o) $ writeSTRef (mOverlay m) (Just o { ovSeen = True })
+      -- (0000h-1FFFh with bit 10 inverted: a stack near 1FFFh off the vectors)
+      pure (ovBytes o U.! (if a16 < 0x2000 then (a16 .&. 0x7FF) `xor` 0x400 else a16 .&. 0x7FF))
+    _ -> busReadA m a
   busRecord m (\mc -> BeRead mc a v)
   tick m 4
   aluStep m
@@ -574,9 +636,66 @@ cpuIdle m = do
   busRecord m BeIdle
   aluStep m
 
+-- | A DSP cartridge's chip with its firmware (the user's dump; step
+-- 7.16b), at power-on from this moment: its DR and SR at the cartridge's
+-- addresses ('dspWindow') from now on.
+attachDsp :: Machine s -> U77.Firmware -> ST s ()
+attachDsp m fw = do
+  mc <- get m sMc
+  writeSTRef (mDsp m) (Just (DspChip fw U77.powerOn (dspTarget mc)))
+
+-- | The chip's instructions by master clock mc: 7.6 MHz against
+-- 236.25 / 11 MHz.
+dspTarget :: Int -> Int
+dspTarget mc = mc * 1672 `div` 4725
+
+-- | The chip caught up to the master clock.
+syncDsp :: Machine s -> ST s ()
+syncDsp m = do
+  mc <- get m sMc
+  d <- readSTRef (mDsp m)
+  case d of
+    Just (DspChip fw u n) -> do
+      let t = dspTarget mc
+          go k v | k <= 0 = v
+                 | otherwise = let v' = U77.step fw v in v' `seq` go (k - 1 :: Int) v'
+      writeSTRef (mDsp m) (Just (DspChip fw (go (t - n) u) (max t n)))
+    Nothing -> pure ()
+
+-- | The DSP's window at an address, if the cartridge has the chip.
+dspAt :: Machine s -> Int -> ST s (Maybe Bool)
+dspAt m a = do
+  d <- readSTRef (mDsp m)
+  pure (case d of
+          Just _ -> dspWindow (mMapping m) (mSramSize m) a
+          Nothing -> Nothing)
+
+dspRead :: Machine s -> Bool -> ST s Word8
+dspRead m sr = do
+  syncDsp m
+  d <- readSTRef (mDsp m)
+  case d of
+    Just (DspChip fw u n)
+      | sr -> pure (U77.snesReadSr u)
+      | otherwise -> do
+          let (b, u') = U77.snesReadDr u
+          writeSTRef (mDsp m) (Just (DspChip fw u' n))
+          pure b
+    Nothing -> mdr m
+
+dspWrite :: Machine s -> Bool -> Word8 -> ST s ()
+dspWrite m sr v = do
+  syncDsp m
+  d <- readSTRef (mDsp m)
+  case d of
+    Just (DspChip fw u n) | not sr -> writeSTRef (mDsp m) (Just (DspChip fw (U77.snesWriteDr v u) n))
+    _ -> pure ()
+
 -- | The A bus as the CPU (and DMA's A side) sees it.
 busReadA :: Machine s -> Int -> ST s Word8
-busReadA m a = case decode (mMapping m) (U.length (mRom m)) (mSramSize m) a of
+busReadA m a = dspAt m a >>= \case
+ Just sr -> dspRead m sr
+ Nothing -> case decode (mMapping m) (U.length (mRom m)) (mSramSize m) a of
   TWram o -> MV.read (mWram m) o
   TRom o -> pure (mRom m U.! o)
   TSram o -> MV.read (mSram m) o
@@ -586,7 +705,9 @@ busReadA m a = case decode (mMapping m) (U.length (mRom m)) (mSramSize m) a of
   TOpen -> mdr m
 
 busWriteA :: Machine s -> Int -> Word8 -> ST s ()
-busWriteA m a v = case decode (mMapping m) (U.length (mRom m)) (mSramSize m) a of
+busWriteA m a v = dspAt m a >>= \case
+ Just sr -> dspWrite m sr v
+ Nothing -> case decode (mMapping m) (U.length (mRom m)) (mSramSize m) a of
   TWram o -> MV.write (mWram m) o v
   TRom _ -> pure ()
   TSram o -> MV.write (mSram m) o v

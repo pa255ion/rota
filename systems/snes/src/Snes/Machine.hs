@@ -60,6 +60,9 @@ import Platform.Video.VgaTiming
 import Snes.Bus (CartCfg (..), CartMap (..))
 import Snes.Core
 import Snes.Display
+#ifdef SNES_DSP1
+import Snes.Dsp1 (dspFwOffset)
+#endif
 import Snes.Save
 import Snes.StateHooks
 import Platform.SaveState (StateHooks (..))
@@ -98,6 +101,13 @@ cartConfig w =
       n = unpack (slice d14 d11 w) :: Unsigned 4
       sram = if n == 0 then 0 else 1024 `shiftL` fromEnum n
   in CartCfg m p q sram
+
+#ifdef SNES_DSP1
+-- | (The DSP-1 build) the firmware's place in DDR: the SNES row's
+-- companion, @dsp1.rom@ (platform/ps/systems/snes.zig).
+dspFwBase :: DdrAddr
+dspFwBase = 0x02700000
+#endif
 
 -- | Where the ROM starts in the file loaded: after a copier's header (bit
 -- 15), or at once.
@@ -144,10 +154,27 @@ snesMachine hooks padB ps s2m = SnesMachine timingO rgbO (volumeStereo vol audio
   busy = stBusy <$> status
   -- (a frozen core is not reset: a save state is written into it while
   -- the PS holds it, step 7.14)
+#ifdef SNES_STATES_CPU
+  -- (the CPU build: a hold owes the core one reset, frozen or not. A load
+  -- comes after the PS's freeze, which reads the layout, and its routine
+  -- starts at the reset's vector from the overlay; the reset lasts a clock
+  -- or two, so the state the PS then writes stays. Without it the frozen
+  -- game ran on, the routine never: layer 4's load-cpu.ps, 7.15d.)
+  owed = register True ((\h r o -> not h || (o && not r)) <$> hold <*> inReset <*> owed)
+  inReset = register False ((\h b r z o -> h && (not z || o) && (r || not b)) <$> hold <*> busy <*> inReset <*> stFrozen <*> owed)
+#else
   inReset = register False ((\h b r z -> h && not z && (r || not b)) <$> hold <*> busy <*> inReset <*> stFrozen)
+#endif
   machineRst = unsafeFromActiveHigh ((||) <$> unsafeToActiveHigh hasReset <*> inReset)
   -- the ROM from DDR
+#ifdef SNES_DSP1
+  -- (the DSP-1 build: the firmware's offsets go to the companion file the
+  -- PS put in DDR, 'dspFwBase', without the copier's skip)
+  ddrReq = (\h k r -> if h then Nothing else (\a -> if a >= dspFwOffset then dspFwBase + resize (a - dspFwOffset) else romBase + k + resize a) <$> r)
+             <$> hold <*> (romSkip <$> word) <*> scDdrReq core
+#else
   ddrReq = (\h k r -> if h then Nothing else (\a -> romBase + k + resize a) <$> r) <$> hold <*> (romSkip <$> word) <*> scDdrReq core
+#endif
   (resp, m2s, status) = ddrReadPort (SNat @5) ddrConfigDefault hold ddrReq s2m
   answer = (\h r -> if h then Nothing else bytes <$> r) <$> hold <*> resp
   bytes :: AxiData -> Vec 8 (Unsigned 8)
@@ -157,22 +184,28 @@ snesMachine hooks padB ps s2m = SnesMachine timingO rgbO (volumeStereo vol audio
   vga = vgaTiming vga640x480
   pace = withReset machineRst (register paceInit pace')
   (pace', runPace) = unbundle (paceStep <$> pace <*> (PaceIn <$> vga <*> scFrame core <*> scV core <*> scH core <*> scOverscan core
-                                                            <*> ((||) <$> menuPause <*> hold)))
+                                                            <*> ((\p o h -> (p && not o) || h) <$> menuPause <*> stRunOn <*> hold)))
   -- (registered: the pace's sums and compares stay out of the 5A22's
   -- step, the bitstream's worst path at 7.11; a master clock a pixel
   -- clock late is nothing against the line's 236 spare ones)
   -- (and on while a save state's freeze is asked for and not yet reached:
-  -- the menu pauses the core, which must still reach rest, within a frame)
-  run = register False ((\r p h o -> (r && not p && not h) || (o && not h)) <$> runPace <*> menuPause <*> hold <*> stRunOn)
+  -- the menu pauses the core, which must still reach rest, within a frame;
+  -- paced: the CPU build's rest can be most of a frame away)
+  run = register False ((\r p h o -> r && (not p || o) && not h) <$> runPace <*> menuPause <*> hold <*> stRunOn)
   -- (SRAM takes the PS's writes while held, and while frozen: a save
   -- state's SRAM goes in through the battery saves' window)
-  core = withReset machineRst (snesCore run cfg pads answer (sramPsOp <$> ((||) <$> hold <*> stFrozen) <*> link) stCtl)
+  core = withReset machineRst (snesCore run cfg pads answer (sramPsOp <$> ((||) <$> hold <*> stFrozen) <*> link) stCtl stOvl)
   -- save states (step 7.14; the Arty's top only): "Snes.StateHooks"
-  (stCtl, stFrozen, stRunOn, stByte) = case hooks of
-    NoStateHooks -> (pure stIdle, pure False, pure False, pure Nothing)
+  (stCtl, stOvl, stFrozen, stRunOn, stByte) = case hooks of
+    NoStateHooks -> (pure stIdle, pure ovlIdle, pure False, pure False, pure Nothing)
     WithStateHooks ->
-      let ho = snesStateHooks link menuPause (scRest core) (scV core) (scOverscan core) (scTop core) (scPortRd core)
-      in (hoCtl ho, hoFrozen ho, hoRun ho, hoByte ho)
+#ifdef SNES_STATES_CPU
+      let rest = scRestCpu core
+#else
+      let rest = scRest core
+#endif
+          ho = snesStateHooks link menuPause hold rest (scV core) (scOverscan core) (scTop core) (scPortRd core) (scOvlDone core)
+      in (hoCtl ho, hoOvl ho, hoFrozen ho, hoRun ho, hoByte ho)
   -- battery saves: the save control, the read back on the byte channel
   saveCtl = register saveCtlInit (saveCtlStep <$> saveCtl <*> bundle (link, scSramWrote core))
   sramRd = register False (isJust . sramRead <$> link)
@@ -188,8 +221,9 @@ snesMachine hooks padB ps s2m = SnesMachine timingO rgbO (volumeStereo vol audio
   ringL = blockRam1 NoClearOnReset (SNat @8192) 0 rdAddr wl
   ringR = blockRam1 NoClearOnReset (SNat @8192) 0 rdAddr wr
   -- black while held or paused: the ring has no picture to keep (the
-  -- menu shows over black)
-  (rdAddr, (timing, rgb)) = snesStream vga (scOverscan core) ((||) <$> hold <*> menuPause) ringL ringR
+  -- menu shows over black); and after, until the core is in step again
+  -- ('pcBlank')
+  (rdAddr, (timing, rgb)) = snesStream vga (scOverscan core) ((\h p b -> h || p || b) <$> hold <*> menuPause <*> (pcBlank <$> pace)) ringL ringR
   (timingO, rgbO) = textOverlay (overlayWrite <$> link) (pcOverlay <$> ctrl) (timing, rgb)
   -- the sound
   audio = snesAudio (scSample core)
@@ -256,10 +290,17 @@ traceInit = Trace traceEvery Nothing 0 (repeat 0)
 -- | A line a second, a character every 2 ms (the PS keeps no FIFO: at most
 -- one byte a millisecond or so, "Platform.Ps.Link").
 traceEvery :: Unsigned 25
-traceEvery = 25175000
-
 traceGap :: Unsigned 17
+#ifdef SNES_TRACE_FAST
+-- (SNES_TRACE=fast, for layer 4: a line every 1,500 clocks, a character
+-- every 16, which the harness's byte channel takes: --ps-bytes-out; the
+-- line, 72 characters, must fit between two, or the trace stops)
+traceEvery = 1500
+traceGap = 16
+#else
+traceEvery = 25175000
 traceGap = 50350
+#endif
 
 -- | One clock: paused while the save's read-back has the channel.
 traceStep :: Trace -> (Bool, Vec 24 (Unsigned 8)) -> (Trace, Maybe (Unsigned 8))

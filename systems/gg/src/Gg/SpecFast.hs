@@ -78,6 +78,8 @@ mapper's (FFFCh's RAM bits and the fixed first 1 KiB as the cartridge's;
 -}
 module Gg.SpecFast
   ( machineFields
+  , rebaseT
+  , setRebase
     -- * Input
   , Input (..)
   , noInput
@@ -202,6 +204,7 @@ data Machine s = Machine
   , mPsgLog  :: !(STRef s [(Int, Word8)]) -- ^ PSG writes with the PSG clocks run before them, newest first (while logging)
   , mPsgLogOn :: !(STRef s Bool)
   , mOvl     :: !(STRef s (Maybe Overlay)) -- ^ the ROM overlay while it runs (side track N, 'runOverlay')
+  , mNoRebase :: !(STRef s Bool)        -- ^ 'rebase' off (sms-rebase's twin, on 64 bits only); not in the state (save states as the reference model's)
   }
 
 -- | The ROM overlay (side track N): its bytes (a power of two), the
@@ -328,7 +331,8 @@ newMachineFull sms console bios fm mapper romBytes = do
   MV.write st sIoCtl 0xFF -- every TH/TR an input
   -- the BIOS's banks: FFFDh-FFFFh's power-on values, as the Sega mapper's
   mapM_ (\(i, v) -> MV.write st (sBiosMap + i) v) [(0, 0), (1, 1), (2, 2)]
-  let m0 = Machine undefined rom pow2 ram cart sms console bios fm mapper vdp psg st input audio cons vlog plog plogOn ovl
+  noReb <- newSTRef False
+  let m0 = Machine undefined rom pow2 ram cart sms console bios fm mapper vdp psg st input audio cons vlog plog plogOn ovl noReb
   cpu <- newCpu (bus m0) zeroRegs { rSP = 0xDFF0 }
   pure m0 { mCpu = cpu }
 
@@ -346,6 +350,35 @@ runFrame m = do
         f <- vdpFrames (mVdp m)
         when (f == f0) go
   go
+  rebase m
+
+-- | 'rebase' on (the default) or off: sms-rebase runs a twin without it
+-- (64 bits only: with a 32-bit Int it overflows, as before).
+setRebase :: Machine s -> Bool -> ST s ()
+setRebase m on = writeSTRef (mNoRebase m) (not on)
+
+-- | The T-states the clocks move back by once they pass 2^28 ('rebase'):
+-- 700 times six frames' (358416: a whole number of frames of the VDP's
+-- 89604 dots at 3 dots per 2 T-states, of PSG ticks (16 T-states) and of
+-- the FM unit's cycles (4 T-states, its samples 72)), about 70 s.
+rebaseT :: Int
+rebaseT = 700 * 358416
+
+-- | The clocks counted from power-on kept small (side track W: the
+-- browser's WebAssembly has a 32-bit Int, and @3 t@ in 'sync' passed 2^31
+-- after 3.3 minutes; the T-states themselves would after 10): after a
+-- frame, past 2^28 T-states, the T-state count, the PSG's ticks and the
+-- VDP's dots go back by 'rebaseT' together, so every difference and every
+-- position in a line or frame stays as it was. The FM unit's own clock
+-- follows ("Sms.SpecFast.FmUnit" sees the jump back). The same on 64 bits.
+rebase :: Machine s -> ST s ()
+rebase m = do
+  t <- getS m sT
+  off <- readSTRef (mNoRebase m)
+  when (t >= 1 `shiftL` 28 && not off) $ do
+    setS m sT (t - rebaseT)
+    getS m sPsgTicks >>= setS m sPsgTicks . subtract (rebaseT `div` 16)
+    vdpRebase (mVdp m) ((rebaseT * 3) `div` 2)
 
 setInput :: Machine s -> Input -> ST s ()
 setInput m = writeSTRef (mInput m)

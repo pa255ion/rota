@@ -1,0 +1,183 @@
+cabal-version:      3.0
+name:               rota-web
+version:            0.1.0.0
+synopsis:           The desktop emulators' fast versions in the browser (side track W)
+license:            MIT
+build-type:         Simple
+
+common web
+  default-language: Haskell2010
+  -- the Clash starter project's extensions, as the systems' .cabal files
+  -- (docs/TOOLCHAIN.md), without Template Haskell
+  default-extensions:
+    BangPatterns BinaryLiterals ConstraintKinds DataKinds DefaultSignatures
+    DeriveAnyClass DeriveDataTypeable DeriveFoldable DeriveFunctor
+    DeriveGeneric DeriveLift DeriveTraversable DerivingStrategies
+    InstanceSigs KindSignatures MagicHash NoStarIsType PolyKinds RankNTypes
+    ScopedTypeVariables StandaloneDeriving TupleSections TypeApplications
+    TypeFamilies TypeOperators ViewPatterns NoImplicitPrelude
+  -- as the systems' own builds (their clash-common): every module's code
+  -- visible to its importers, so a CPU core written against a bus class
+  -- (the NES's 6502) is specialised to its machine there; without it the
+  -- browser's NES ran its CPU generic, every bus access a dictionary call
+  ghc-options: -fexpose-all-unfoldings
+  build-depends:
+    base,
+    bytestring,
+    vector
+
+-- Each system's desktop library (W.3; W.1's Game Gear build, Web.Gg, gave
+-- way to rota-sms, which runs it from the same code) (systems/<n>/desktop,
+-- the C calls the desktop's Zig front end makes) compiled unchanged, with
+-- Web.Alloc for the page's buffers. web/shim stands in for the two screen
+-- modules that write PNGs (JuicyPixels, Clash's frame type), first in the
+-- search path so the systems' own aren't used.
+
+executable rota-gb
+  import:           web
+  main-is:          Gb.hs
+  hs-source-dirs:   main src shim ../systems/gb/desktop ../systems/gb/src ../platform/src
+  other-modules:
+    Web.Alloc
+    Gb.Cartridge
+    Gb.Desktop
+    Gb.Hooks
+    Gb.Screen
+    Gb.Spec
+    Gb.Spec.Apu
+    Gb.Spec.Cpu
+    Gb.Spec.Machine
+    Gb.Spec.Ppu
+    Gb.Spec.State
+    Gb.SpecFast
+    Gb.SpecFast.Apu
+    Gb.SpecFast.Cpu
+    Gb.SpecFast.Machine
+    Gb.SpecFast.Ppu
+    Gb.SpecFast.State
+    Platform.Snapshot
+  ghc-options:
+    -O2 -no-hs-main -optl-mexec-model=reactor
+    "-optl-Wl,--export=hs_init,--export=web_alloc,--export=web_free,--export=gb_new,--export=gb_free,--export=gb_frame,--export=gb_audio,--export=gb_pixels,--export=gb_cram_size,--export=gb_cram_get,--export=gb_cram_set,--export=gb_state_save,--export=gb_state_get,--export=gb_state_load"
+
+executable rota-chip8
+  import:           web
+  main-is:          Chip8.hs
+  hs-source-dirs:   main src ../systems/chip8/desktop ../systems/chip8/src ../platform/src
+  other-modules:
+    Web.Alloc
+    Chip8.Desktop
+    Chip8.Spec
+    Platform.Snapshot
+  ghc-options:
+    -O2 -no-hs-main -optl-mexec-model=reactor
+    "-optl-Wl,--export=hs_init,--export=web_alloc,--export=web_free,--export=chip8_new,--export=chip8_free,--export=chip8_frame,--export=chip8_audio,--export=chip8_pixels,--export=chip8_halted,--export=chip8_state_save,--export=chip8_state_get,--export=chip8_state_load"
+
+executable rota-nes
+  import:           web
+  main-is:          Nes.hs
+  hs-source-dirs:   main src ../systems/nes/desktop ../systems/nes/src ../cpus/mos6502/src ../platform/src
+  other-modules:
+    Web.Alloc
+    Mos6502.Spec
+    Mos6502.SpecFast
+    Nes.Cartridge
+    Nes.Desktop
+    Nes.Mixer
+    Nes.Palette
+    Nes.Spec.Apu
+    Nes.Spec.Machine
+    Nes.Spec.Mapper
+    Nes.Spec.Ppu
+    Nes.SpecFast.Apu
+    Nes.SpecFast.Machine
+    Nes.SpecFast.Mapper
+    Nes.SpecFast.Ppu
+    Nes.SpecPerf.Apu
+    Nes.SpecPerf.Cpu
+    Nes.SpecPerf.Machine
+    Nes.SpecPerf.Mapper
+    Nes.SpecPerf.Ppu
+    Platform.Snapshot
+  ghc-options:
+    -O2 -no-hs-main -optl-mexec-model=reactor
+    "-optl-Wl,--export=hs_init,--export=web_alloc,--export=web_free,--export=nes_new,--export=nes_free,--export=nes_frame,--export=nes_audio,--export=nes_pixels,--export=nes_skip,--export=nes_reset,--export=nes_cram_size,--export=nes_cram_get,--export=nes_cram_set,--export=nes_state_save,--export=nes_state_get,--export=nes_state_load"
+
+executable rota-a800
+  import:           web
+  main-is:          A800.hs
+  hs-source-dirs:   main src ../systems/a800xl/desktop ../systems/a800xl/src ../cpus/mos6502/src ../platform/src
+  other-modules:
+    Web.Alloc
+    A800.Desktop
+    A800.Media
+    A800.Mixer
+    A800.Palette
+    A800.Spec.Antic
+    A800.Spec.Gtia
+    A800.Spec.Machine
+    A800.Spec.Pokey
+    A800.SpecFast.Antic
+    A800.SpecFast.Gtia
+    A800.SpecFast.Machine
+    A800.SpecFast.Pokey
+    Mos6502.Spec
+    Mos6502.SpecFast
+    Platform.Snapshot
+  ghc-options:
+    -O2 -no-hs-main -optl-mexec-model=reactor
+    "-optl-Wl,--export=hs_init,--export=web_alloc,--export=web_free,--export=a800_new,--export=a800_free,--export=a800_frame,--export=a800_audio,--export=a800_pixels,--export=a800_state_save,--export=a800_state_get,--export=a800_state_load"
+
+executable rota-snes
+  import:           web
+  main-is:          Snes.hs
+  hs-source-dirs:   main src ../systems/snes/desktop ../systems/snes/src ../cpus/w65c816/src ../cpus/spc700/src ../platform/src
+  other-modules:
+    Web.Alloc
+    Platform.Snapshot
+    Snes.Cart
+    Snes.Desktop
+    Snes.Spec.Apu
+    Snes.Spec.Dsp
+    Snes.Spec.Gauss
+    Snes.Spec.Machine
+    Snes.Spec.Map
+    Snes.Spec.Ppu
+    Snes.SpecFast.Apu
+    Snes.SpecFast.Dsp
+    Snes.SpecFast.Cpu
+    Snes.SpecFast.Machine
+    Snes.SpecFast.Ppu
+    Snes.SpecFast.RenderLog
+    Snes.SpecFast.Spc700
+    Spc700.Spec
+    Spc700.Types
+    W65c816.Spec
+    W65c816.Types
+  ghc-options:
+    -O2 -no-hs-main -optl-mexec-model=reactor
+    "-optl-Wl,--export=hs_init,--export=web_alloc,--export=web_free,--export=snes_new,--export=snes_free,--export=snes_frame,--export=snes_audio,--export=snes_pixels,--export=snes_pixels_rgba,--export=snes_log_size,--export=snes_log_get,--export=snes_render_new,--export=snes_render_free,--export=snes_render_feed,--export=snes_render_pixels_rgba,--export=snes_render_hash,--export=snes_cram_size,--export=snes_cram_get,--export=snes_cram_set,--export=snes_hash,--export=snes_skip,--export=snes_state_save,--export=snes_state_get,--export=snes_state_load"
+
+executable rota-sms
+  import:           web
+  main-is:          Sms.hs
+  hs-source-dirs:   main src shim ../systems/sms/desktop ../systems/sms/src ../systems/gg/src ../cpus/z80/src ../platform/src
+  other-modules:
+    Web.Alloc
+    Gg.Screen
+    Gg.Spec
+    Gg.Spec.Psg
+    Gg.Spec.Vdp
+    Gg.SpecFast
+    Gg.SpecFast.Vdp
+    Gg.StateTable
+    Platform.Snapshot
+    Sms.Desktop
+    Sms.Spec.Fm
+    Sms.Spec.FmUnit
+    Sms.SpecFast.Fm
+    Sms.SpecFast.FmUnit
+    Z80.Spec
+  ghc-options:
+    -O2 -no-hs-main -optl-mexec-model=reactor
+    "-optl-Wl,--export=hs_init,--export=web_alloc,--export=web_free,--export=sms_new,--export=sms_free,--export=sms_frame,--export=sms_audio,--export=sms_width,--export=sms_height,--export=sms_pixels,--export=sms_hash,--export=sms_cram_size,--export=sms_cram_get,--export=sms_cram_set,--export=sms_state_save,--export=sms_state_get,--export=sms_state_load"

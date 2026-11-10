@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-|
 The 5A22 alone with WRAM and SRAM, for its out-of-context synthesis
 (PLAN.md step 7.9a; @make snes-ooc SNES_OOC=Snes.BusOoc
@@ -40,7 +41,12 @@ topEntity clk rst run cmap romP romQ sram p1 p2 romV romD ppuV ppuOpen ppuD apuO
       pads = (\a b -> a :> b :> Nil) <$> r 0 p1 <*> r 0 p2
       romIn = (\v d -> if v then Just d else Nothing) <$> r False romV <*> r 0 romD
       ppuR = (\v o d -> if v then Just (if o then Nothing else Just d) else Nothing) <$> r False ppuV <*> r False ppuOpen <*> r 0 ppuD
-      inp = BusIn <$> r False run <*> cfg <*> pads <*> wramD <*> sramD <*> romIn <*> ppuR <*> r True apuOk <*> r True apuOk <*> r 0 apuD <*> dmaD
+#ifdef SNES_DSP1
+      inp = BusIn <$> r False run <*> cfg <*> pads <*> wramD <*> sramD <*> romIn <*> ppuR <*> r True apuOk <*> r True apuOk <*> r 0 apuD <*> dmaD <*> pure False <*> pure 0
+                  <*> pure True <*> pure True <*> pure 0
+#else
+      inp = BusIn <$> r False run <*> cfg <*> pads <*> wramD <*> sramD <*> romIn <*> ppuR <*> r True apuOk <*> r True apuOk <*> r 0 apuD <*> dmaD <*> pure False <*> pure 0
+#endif
       st = register busInit st'
       (st', out) = unbundle (busClock <$> st <*> inp)
       wramD = blockRam1 NoClearOnReset (SNat @131072) 0 (boWram <$> out) (wramW <$> out)

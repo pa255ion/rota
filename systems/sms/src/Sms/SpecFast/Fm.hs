@@ -68,6 +68,8 @@ module Sms.SpecFast.Fm
   , fmLastMix
   , fmPatchRom
   , fmMargin
+  , fmRebase
+  , fmSetRebase
   ) where
 
 import Prelude
@@ -95,6 +97,7 @@ data Fm s = Fm
   , fOuts    :: !(STRef s (U.Vector Int, U.Vector Int)) -- ^ every slot's v (y >> 3): the last frame, the one before
   , fPins    :: !(STRef s [U.Vector (Int, Int)]) -- ^ samples' pins, newest first (unused: 'fmLastMix')
   , fMix     :: !(STRef s Int)        -- ^ side track Q: the last completed sample's 'fmMix'
+  , fRebase  :: !(STRef s Bool)       -- ^ side track W: 'fmRebase' on (off: sms-rebase's twin)
   }
 
 -- Per-slot fields (fSlot, 8 per slot).
@@ -123,7 +126,7 @@ newFm = do
     MV.write slot (s * slotWords + oSt) stRelease
   Fm regs slot <$> newSTRef [] <*> newSTRef [] <*> newSTRef Nothing <*> newSTRef 0
     <*> newSTRef (0, 0) <*> newSTRef 0 <*> newSTRef 0 <*> newSTRef False
-    <*> newSTRef (U.replicate 18 0, U.replicate 18 0) <*> newSTRef [] <*> newSTRef 0
+    <*> newSTRef (U.replicate 18 0, U.replicate 18 0) <*> newSTRef [] <*> newSTRef 0 <*> newSTRef True
 
 -- | A write strobe before the clock of absolute cycle @cyc@: port 0 the
 -- address, 1 the data. Writes come in time order, and 'fmRunTo' must not
@@ -168,6 +171,32 @@ fmRunTo :: Fm s -> Int -> ST s ()
 fmRunTo fm cyc = do
   f <- readSTRef (fFrame fm)
   when (18 * f + 16 + fmMargin < cyc) $ runFrame fm >> fmRunTo fm cyc
+
+-- | The FM's own clock kept below 2^31 cycles (side track W: a 32-bit Int
+-- in the browser): once 'fFrame' reaches 2^20 * 105 samples (about 37
+-- minutes), every absolute count goes back by that many samples (18
+-- cycles each): the frame count, the writes on their way, the rhythm's
+-- changes, the noise's steps. Its behaviour depends on the frame count
+-- only through periods that divide it (the EG clock's 2^20, the
+-- tremolo's 13440, the counters' 2^13). The cycles taken off, for the
+-- caller's clock (0 if not due).
+fmRebase :: Fm s -> ST s Int
+fmRebase fm = do
+  f <- readSTRef (fFrame fm)
+  on <- readSTRef (fRebase fm)
+  if f < fmPeriod || not on then pure 0 else do
+    let d = 18 * fmPeriod
+    writeSTRef (fFrame fm) (f - fmPeriod)
+    modifySTRef' (fPend fm) (map (\(at, r, v) -> (at - d, r, v)))
+    modifySTRef' (fRhy fm) (map (\(l, b) -> (l - d, b)))
+    modifySTRef' (fNoise fm) (\(r, k) -> (r, k - d))
+    pure d
+ where
+  fmPeriod = 105 * 1048576
+
+-- | 'fmRebase' on (the default) or off (sms-rebase's twin, 64 bits only).
+fmSetRebase :: Fm s -> Bool -> ST s ()
+fmSetRebase fm = writeSTRef (fRebase fm)
 
 -- | Samples whose pins are complete.
 fmSamples :: Fm s -> ST s Int

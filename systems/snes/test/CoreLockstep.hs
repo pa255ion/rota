@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 -- | Layer 1, step 7.9a: the Clash 5A22 ("Snes.Bus") with the Clash PPU
 -- ("Snes.Ppu") against the spec machine ("Snes.Spec"). Each ROM runs in
 -- the spec with its bus work recorded ('busTraceOn': every CPU cycle, DMA
@@ -18,6 +19,10 @@
 -- CORE_ONLY="lorom dma": only those ROMs.
 module Main (main) where
 
+import Snes.Spec.SaveState (specAtRest, specTable, tableFields)
+import qualified Snes.Spec.Machine as SM
+import Snes.StateTap (tableOf)
+import W65c816.Core (Cpu (..), Stage (..), finished)
 import Prelude
 
 import Control.Exception (try)
@@ -46,6 +51,12 @@ import Snes.Cart
 import Snes.Ppu
 import Snes.Spec hiding (frames)
 import Snes.Spec.Gauss (gauss)
+#ifdef SNES_DSP1
+import Snes.Dsp1
+import Snes.Spec.Upd77c25 (Firmware (..), firmwareOf)
+import Snes.Spec.Upd77c25Asm (dspTestFirmware)
+import Snes.Upd77c25 (ReqAddrs (..))
+#endif
 
 asmDir, romDir, iplFile :: FilePath
 asmDir = "../../build/snes/asm"
@@ -78,8 +89,17 @@ slowDdrRoms :: [String]
 slowDdrRoms = ["Mode7HDMA", "RedSpaceIndirectHDMA", "WaveHDMA"]
 
 -- | Our register tests (they stop at their result), krom's CPU tests,
--- picture tests with DMA and HDMA, the two games.
+-- picture tests with DMA and HDMA, the two games. (The DSP-1 build, cabal
+-- -f dsp1: our DSP-1 test cartridge alone, with our firmware: that build
+-- gives every cartridge the chip's windows, step 7.16d.)
 roms :: [(FilePath, FilePath, Int)]
+#ifdef SNES_DSP1
+roms = [ (asmDir, "dsp1.sfc", 8) ]
+
+-- | Our DSP-1 test cartridge's firmware.
+dspFw :: Firmware
+dspFw = either error id (firmwareOf dspTestFirmware)
+#else
 roms =
   [ (asmDir, "lorom.sfc", 3)
   , (asmDir, "hirom.sfc", 3)
@@ -108,6 +128,7 @@ roms =
   , (romDir </> "opensnes", "shmup_1942.sfc", 6)
   , (romDir </> "games", "unnamed-tech-demo-v3.sfc", 6)
   ]
+#endif
 
 coreTest :: Bool -> Bool -> FilePath -> Int -> Assertion
 coreTest ddr slowCase path n = do
@@ -116,13 +137,32 @@ coreTest ddr slowCase path n = do
   iplB <- readRom iplFile
   cart <- maybe (assertFailure (path <> ": no header") >> fail "") pure (parseCart file)
   -- the spec
-  (specEvs, specFrames, wram, vram, cg, oam, mcEnd, apuEvs) <- stToIO $ do
+  (specEvs, specFrames, wram, vram, cg, oam, mcEnd, apuEvs, specTables) <- stToIO $ do
     m <- newMachine iplB cart file
     traceOn m
     busTraceOn m
     apuTraceOn (apuOf m)
     reset m
-    runFrames m n
+#ifdef SNES_DSP1
+    attachDsp m dspFw
+#endif
+    -- (runFrames, instruction by instruction: the state table at each
+    -- frame's first moment at rest, for the core's tap, step 7.15c)
+    f0 <- SM.frames m
+    let run1 lastF acc = do
+          f <- SM.frames m
+          stopped <- cpuStopped m
+          if f >= f0 + n || stopped then pure acc else do
+            stepCpu m
+            atRest' <- specAtRest m
+            f' <- SM.frames m
+            if atRest' && Just f' /= lastF
+              then do
+                t <- specTable m
+                mc <- masterClocks m
+                run1 (Just f') ((mc, t) : acc)
+              else run1 lastF acc
+    tabs <- reverse <$> run1 Nothing []
     bt <- takeBusTrace m
     pt <- takeTrace m
     w <- U.fromList <$> mapM (readWram m) [0 .. 0x1FFFF]
@@ -131,7 +171,7 @@ coreTest ddr slowCase path n = do
     o <- mapM (readOam m) [0 .. 543]
     mc <- masterClocks m
     ae <- apuTakeTrace (apuOf m)
-    pure (bt, [ (t, fr) | PpuFrameDone t fr <- pt ], w, v, g, o, mc, ae)
+    pure (bt, [ (t, fr) | PpuFrameDone t fr <- pt ], w, v, g, o, mc, ae, tabs)
   -- the core
   let rom = U.fromList (B.unpack (fst (stripCopier file)))
       romSize = U.length rom
@@ -165,6 +205,17 @@ coreTest ddr slowCase path n = do
   evs <- newIORef []
   -- a frame's difference is reported after the bus work's, which says where
   frameErr <- newIORef Nothing
+  tapPend <- newIORef specTables
+  tapErr <- newIORef Nothing
+  tapMissed <- newIORef (0 :: Int)
+  tapDbg <- (== Just "1") <$> lookupEnv "CORE_TAPDBG"
+#ifdef SNES_DSP1
+  -- the DSP-1 (its firmware put in directly: the load through the ROM port
+  -- is layer 4's), its memories as block RAMs (last clock's addresses)
+  dspR <- newIORef dspInit { dsLoad = LDone }
+  dspAddr <- newIORef (ReqAddrs 0 0 0 0)
+  dspRam <- MV.replicate 256 (0 :: Word16)
+#endif
   peek <- maybe [] (map read . words) <$> lookupEnv "CORE_PEEK"
   let (peekLo, peekHi) = case peek of
         [a, b] -> (a, b)
@@ -173,17 +224,47 @@ coreTest ddr slowCase path n = do
       go :: BusC -> PpuC -> ApuC -> BusIn -> PpuIn -> ApuIn -> [(Int, U.Vector Word16)] -> Int -> IO (BusC, PpuC)
       go bus ppu apuK bin pin ain frs nClk = do
         r <- rand seed
+#ifdef SNES_DSP1
+        dsp <- readIORef dspR
+#endif
         let run = r `mod` 6 /= 0
             -- the PPU's read value of last clock's access, the sound
             -- module's readiness and read (from their states)
             pre = snd (ppuClock ppu pin { piTick = False, piAccess = Nothing })
             apre = snd (apuClock apuK ain { aiTick = False, aiPort = Nothing })
             binA = if specApu then bin else bin { biApuReady0 = aoReady0 apre, biApuReady1 = aoReady1 apre, biApuRead = aoRead apre }
+#ifdef SNES_DSP1
+            (bus', bo) = busClock bus binA { biRun = run, biPpuRead = poRead pre
+                                           , biDspReady0 = dspReady0 dsp, biDspReady1 = dspReady1 dsp, biDspRead = dsByte dsp }
+#else
             (bus', bo) = busClock bus binA { biRun = run, biPpuRead = poRead pre }
+#endif
             (ppu', po) = ppuClock ppu pin { piTick = boTick bo, piAccess = boPpu bo }
             (apuK', ao) = apuClock apuK ain { aiTick = boTick bo, aiPort = if specApu then Nothing else boApu bo }
             mc = fromIntegral (bMc bus') :: Int
         forM_ (boEv bo) $ \(t, e) -> modifyIORef' evs ((fromIntegral t, e) :)
+        -- the state table's tap (step 7.15c): at the spec's moments at rest,
+        -- the CPU at its instruction's end
+        -- (CORE_TAPDBG=1: the CPU's stage and PC around the next moment)
+        when tapDbg $ do
+          pendD <- readIORef tapPend
+          case pendD of
+            (tmc, _) : _ | abs (mc - tmc) < 60 -> putStrLn ("TAPDBG mc " <> show mc <> " stage " <> show (cStage (bCpu bus'))
+                <> " phase " <> show (cPhase (bCpu bus')) <> " PC " <> show (cPC (bCpu bus')) <> " A " <> show (cA (bCpu bus'))
+                <> " tick " <> show (boTick bo) <> " target " <> show tmc)
+            _ -> pure ()
+        when (cStage (bCpu bus') == StDone) $ do
+          pendT <- readIORef tapPend
+          case pendT of
+            (tmc, tw) : rest | tmc == mc -> do
+              writeIORef tapPend rest
+              let got' = U.fromList (concatMap le32 (C.toList (tableOf bus' { bCpu = finished (bCpu bus') } ppu')))
+                  le32 v = [ fromIntegral (v `C.shiftR` (8 * k)) | k <- [0 .. 3 :: Int] ] :: [Word8]
+                  bad = [ (fieldAt o, tw U.! o, got' U.! o) | o <- [0 .. U.length tw - 1], tw U.! o /= got' U.! o ]
+              unless (null bad) $ modifyIORef' tapErr (\e -> maybe (Just ("the tap at master clock " <> show mc <> ": "
+                <> unwords [ nm <> " spec " <> show a <> " core " <> show b' | (nm, a, b') <- take 8 bad ])) Just e)
+            (tmc, _) : rest | tmc < mc -> writeIORef tapPend rest >> modifyIORef' tapMissed (+ 1)
+            _ -> pure ()
         -- CORE_PEEK="from to": the core's HDMA state on each master clock in that range
         when (boTick bo && mc >= peekLo && mc <= peekHi) $
           putStrLn (show mc <> " H " <> show (bHc bus') <> " V " <> show (bVc bus') <> " fg " <> show (fStep bus') <> " left " <> show (fLeft bus')
@@ -227,6 +308,18 @@ coreTest ddr slowCase path n = do
             writeIORef pend (Just (lat, a))
           when (not (boTick bo) && run) $ modifyIORef' stalls (+ 1)
           pure (rpOut rp')
+#ifdef SNES_DSP1
+        -- the DSP-1's clock, its memories at last clock's addresses
+        ra <- readIORef dspAddr
+        mv <- MV.read dspRam (fromIntegral (raDp ra))
+        mk <- MV.read dspRam (fromIntegral (raDpK ra))
+        let dIn = DspIn (boTick bo) (boDsp bo) Nothing (fromIntegral (fwProgram dspFw U.! fromIntegral (raPc ra)))
+                        (fromIntegral (fwData dspFw U.! fromIntegral (raRp ra))) (fromIntegral mv) (fromIntegral mk)
+            (dsp', dOut) = dspClock dsp dIn
+        forM_ (doRam dOut) $ \(a, v) -> MV.write dspRam (fromIntegral a) (fromIntegral v)
+        writeIORef dspR dsp'
+        writeIORef dspAddr (dspReq dsp)
+#endif
         -- the Clash sound module's memories
         -- ARAM's two ports (the SPC700's, the DSP's): both read, then both write
         aramV <- MV.read aram (fromIntegral (aoAram ao))
@@ -297,6 +390,12 @@ coreTest ddr slowCase path n = do
             assertFailure (show (length got) <> " bus events, the spec " <> show (length specEvs)
                            <> "; the first extra or missing: " <> show (take 3 (drop (min (length got) (length specEvs)) (if length got > length specEvs then got else specEvs))))
   readIORef frameErr >>= maybe (pure ()) assertFailure
+  -- the tap: every moment met, every field the spec's
+  readIORef tapErr >>= maybe (pure ()) assertFailure
+  missed <- readIORef tapMissed
+  left <- length <$> readIORef tapPend
+  unless (missed == 0 && left == 0) $ assertFailure ("the tap: " <> show missed <> " of the spec's moments at rest never met at an instruction's end, "
+                                                     <> show left <> " left over (of " <> show (length specTables) <> ")")
   -- the DDR's latency held the machine (else this run tested nothing more)
   when ddr $ do
     k <- readIORef stalls
@@ -363,3 +462,9 @@ evMc e = case e of
   BeIdle t -> t
   BeDma t _ _ _ _ -> t
   BeTable t _ _ -> t
+
+-- | The table's field at a byte offset (Snes.Spec.SaveState's names).
+fieldAt :: Int -> String
+fieldAt o = case [ nm | (nm, fo, sz) <- tableFields, o >= fo, o < fo + sz ] of
+  nm : _ -> nm
+  [] -> "?"

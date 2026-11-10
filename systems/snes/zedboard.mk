@@ -52,3 +52,11 @@ PS_APP        = relay
 # side track L's Game Boy did)
 CLASH_EXTRA = -fclash-spec-limit=100
 VERILATOR_EXTRA = +1364-2005ext+v
+
+# Step 7.15: how save states load. SNES_STATES=direct (the default, step
+# 7.14: the whole core's record written back as a chain), cpu (the
+# 65C816's restore routine from a ROM overlay, only the sound module's
+# record written back: fewer LUTs, docs/systems/snes.md), none (no state
+# hooks, as the ZedBoard's top)
+SNES_STATES ?= direct
+CLASH_EXTRA += $(if $(filter cpu,$(SNES_STATES)),-DSNES_STATES_CPU)$(if $(filter none,$(SNES_STATES)), -DSNES_STATES_NONE)

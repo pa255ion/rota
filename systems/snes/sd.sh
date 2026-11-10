@@ -21,6 +21,24 @@ if [ -n "${SNES_DIRS:-}" ]; then
     done
 fi
 
+# The DSP-1's firmware (M7 step 7.16d): SNES_DSP1, the user's own dump
+# (never fetched or committed), as /snes/dsp1.rom, which the menu loads into
+# DDR for the DSP-1 bitstream (platform/ps/systems/snes_dsp.zig): 8 KiB,
+# little-endian (the newer dumps: its first opcodes hold JRQM, 97C00xh,
+# as C0h 97h in bytes 1-2).
+if [ -n "${SNES_DSP1:-}" ]; then
+    size=$(stat -L -c %s "$SNES_DSP1" 2>/dev/null || echo 0)
+    if [ "$size" != 8192 ]; then
+        echo "mksd.sh: $SNES_DSP1: $size bytes; the DSP-1's firmware is 8 KiB" >&2
+    elif ! od -An -tx1 -j1 -N2 "$SNES_DSP1" | grep -q "c0 97"; then
+        echo "mksd.sh: $SNES_DSP1: not a little-endian dump (no JRQM first)" >&2
+    else
+        mdir -i "$img" ::/snes >/dev/null 2>&1 || mmd -i "$img" ::/snes
+        mcopy -i "$img" "$SNES_DSP1" ::/snes/dsp1.rom
+        echo "mksd.sh: the DSP-1's firmware $SNES_DSP1 as /snes/dsp1.rom"
+    fi
+fi
+
 # The Super Nintendo's battery saves (SRAM), as the Master System's: a slot
 # per ROM (link --save-slots), the stored save when its size matches.
 if [ -n "${LINK:-}" ] && [ -n "${SNES_DIRS:-}" ]; then

@@ -1729,7 +1729,7 @@ noinline fn movieFile(make: bool) ?fat.Entry {
         m.message("The movie slot is empty.");
         return null;
     }
-    const made = save.makeFile(&fs, path, movie.fileSize(savestate.movieArea(system.?.state, state_cram), movie_frames_made)) catch |err| {
+    const made = save.makeFile(&fs, path, movie.fileSize(savestate.movieArea(state_spec, state_cram), movie_frames_made)) catch |err| {
         fs.buf_lba = null;
         report("movies: making the slot failed: ", @errorName(err));
         m.message(if (err == error.CardFull) "The card is full." else "Couldn't make the movie's file.");
@@ -1744,7 +1744,7 @@ noinline fn movieFile(make: bool) ?fat.Entry {
 const movie_frames_made: u32 = 30 * 60 * 60;
 
 fn movieWordsAt() u32 {
-    return movie.wordsOffset(savestate.movieArea(system.?.state, state_cram));
+    return movie.wordsOffset(savestate.movieArea(state_spec, state_cram));
 }
 
 /// Whether the game has a movie slot, and what it holds.
@@ -1788,7 +1788,7 @@ noinline fn startMovie(mode: movie.Mode) void {
     // a true power-on needs the core's memories cleared (they keep their
     // bytes over a reset): through the save states' window, frozen. A
     // bitstream without it can't give a movie the same start twice
-    const spec = s.state orelse return m.message("Movies need save states here (Arty).");
+    const spec = state_spec orelse return m.message("Movies need save states here (Arty).");
     const sv = s.save orelse return m.message("Movies need save states here (Arty).");
     _ = savestate.freeze(&link, spec, sv) catch {
         savestate.thaw(&link, spec, sv);
@@ -2209,7 +2209,11 @@ noinline fn rememberGame(name: []const u8, rom: savestate.RomId, cram: u32) void
     @memcpy(state_name[0..state_name_len], name[0..state_name_len]);
     state_rom = rom;
     state_cram = cram;
-    m.states_ok = system.?.state != null;
+    // (the Spec for this bitstream: savestate.pick by the PL's layout
+    // version, read without freezing, for a system with two builds, M7
+    // 7.15d; any other the row's)
+    state_spec = if (system.?.state) |sp| (if (system.?.save) |sv| savestate.pick(sp, savestate.versionNow(&link, sp, sv)) else sp) else null;
+    m.states_ok = state_spec != null;
     m.shots_ok = shots_built and system.?.screen != null;
     m.slot_used = [_]?bool{null} ** savestate.slots;
     if (mounted and m.states_ok) refreshSlots();
@@ -2220,7 +2224,7 @@ noinline fn rememberGame(name: []const u8, rom: savestate.RomId, cram: u32) void
 /// `make`: made if it isn't there (saving into it; side track K, F1), else
 /// a missing one is an empty slot.
 noinline fn slotFile(n: u8, make: bool) ?fat.Entry {
-    const spec = system.?.state.?;
+    const spec = state_spec.?;
     var buf: [save.max_path]u8 = undefined;
     const path = savestate.statePath(&buf, state_dir[0..state_dir_len], state_name[0..state_name_len], n) orelse {
         m.message("The slot's path is too long.");
@@ -2274,7 +2278,7 @@ noinline fn refreshSlots() void {
 /// The running game (paused, the menu open) into slot n.
 noinline fn saveState(n: u8) void {
     const s = system.?;
-    const spec = s.state orelse return;
+    const spec = state_spec orelse return;
     const sv = s.save orelse return;
     const e = slotFile(n, true) orelse return;
     const lay = savestate.freeze(&link, spec, sv) catch {
@@ -2301,11 +2305,21 @@ noinline fn saveState(n: u8) void {
 /// Slot n into the running game (paused, the menu open), if its header
 /// says it is this game's, from this bitstream.
 /// The table and the overlay of a load through the CPU (savestate.load).
-var restore_buf: [savestate.gb.restore.?.work()]u8 linksection(".ddr") = undefined;
+/// (sized for the largest among the systems' Specs and their alts)
+var restore_buf: [savestate.maxWork(&state_specs)]u8 linksection(".ddr") = undefined;
+const state_specs = blk: {
+    var a: [menu.systems.len]?savestate.Spec = undefined;
+    for (menu.systems, 0..) |sy, i| a[i] = sy.state;
+    break :blk a;
+};
+
+/// The running game's state Spec (`rememberGame`: the row's, or its alt
+/// for the PL's layout version).
+var state_spec: ?savestate.Spec = null;
 
 noinline fn loadState(n: u8) void {
     const s = system.?;
-    const spec = s.state orelse return;
+    const spec = state_spec orelse return;
     const sv = s.save orelse return;
     const e = slotFile(n, false) orelse return;
     const h = savestate.readHeader(&fs, &card, e, &sd_buf) catch {

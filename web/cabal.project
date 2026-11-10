@@ -1,0 +1,3 @@
+-- side track W: the browser build, by GHC's wasm backend (web/flake.nix);
+-- its own project, so the board's packages (and Clash) aren't part of it
+packages: rota-web.cabal

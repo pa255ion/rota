@@ -16,6 +16,7 @@ MEMSEL set) ROM in banks 80-FF; 12 for 4000-41FF; 8 for the rest.
 module Snes.Spec.Map
   ( Target (..)
   , decode
+  , dspWindow
   , speed
   , mirror
   ) where
@@ -65,6 +66,24 @@ decode mapping romSize sramSize a
   -- ExHiROM: banks C0-FF are the first 4 MiB, 40-7D the next (later)
   exhi = if mapping == ExHiRom && bank < 0x80 then 0x400000 else 0
   rom o = if romSize == 0 then TOpen else TRom (mirror o romSize)
+
+-- | The DSP-1's data and status registers on a DSP cartridge (M7 step
+-- 7.16b; fullsnes, "SNES Cart DSP-n/ST010/ST011", its I/O ports): Just
+-- False for DR, Just True for SR, Nothing elsewhere. LoROM without SRAM:
+-- banks 30h-3Fh, 8000h-BFFFh DR and C000h-FFFFh SR; with SRAM from bank
+-- 20h; HiROM: banks 00h-1Fh, 6000h-6FFFh DR and 7000h-7FFFh SR. Banks
+-- 80h-FFh mirror them. (The 2 MiB LoROM board was never made; the
+-- MAD-2 HiROM boards' 00h-0Fh is a subset.)
+dspWindow :: Mapping -> Int -> Int -> Maybe Bool
+dspWindow mapping sramSize a = case mapping of
+  LoRom
+    | bank >= (if sramSize > 0 then 0x20 else 0x30), bank < 0x40, off >= 0x8000 -> Just (off >= 0xC000)
+  HiRom
+    | bank < 0x20, off >= 0x6000, off < 0x8000 -> Just (off >= 0x7000)
+  _ -> Nothing
+ where
+  bank = (a `shiftR` 16) .&. 0x7F
+  off = a .&. 0xFFFF
 
 -- | Master clocks for a CPU cycle at an address; MEMSEL (420Dh bit 0)
 -- makes ROM in banks 80-FF fast.

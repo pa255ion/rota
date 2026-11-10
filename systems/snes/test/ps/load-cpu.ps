@@ -1,0 +1,41 @@
+# A load through the CPU at layer 4 (M7 step 7.15d; Makefile
+# ci-savestate-snes-cpu; SNES_STATES=cpu), as the NES's state.ps: the
+# Verilog's 65C816 overlay, which only Clash's simulation had run.
+#
+# tone.sfc running; frozen, then held (the core at its reset, frozen at once), WRAM's
+# $0300 a JMP $0300 (through the write window, 0x40000 + 0300h), the ROM
+# overlay (0x06000: bank 00h 8000h-FFFFh mod 800h) a routine at 8000h:
+# LDA #$42, STA $0310, JMP $0300; the reset vector (FFFCh: offset 7FCh)
+# 8000h; its end the JMP (8005h), armed (0x01F10: low, high, 1); let go
+wait 50000
+# (the windows answer in the state mode: paused and frozen first, as
+# state-cpu.ps; then held)
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 40000
+hold 1
+wait 10
+bytes 0x240300 4C0003
+bytes 0x206000 A9428D10034C0003
+bytes 0x2067FC 0080
+bytes 0x201F10 058001
+hold 0
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0
+wait 40000
+# the routine ran (WRAM $0310 = 42) and the overlay ended at its JMP: the
+# CPU runs on from WRAM, where it is frozen (in V-blank: within a frame).
+# Expected (test/ps/load-cpu.hex): the status (frozen; the record 552
+# bytes, 28 02; version 2), 42, and the loop 4C 00 03.
+ctrl 2
+bytes 0x140000 01
+bytes 0x140050 01
+wait 20000
+bytes 0x301F00 00000000
+bytes 0x340310 00
+bytes 0x340300 000000
+bytes 0x140050 00
+bytes 0x140000 00
+ctrl 0

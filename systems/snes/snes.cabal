@@ -56,12 +56,30 @@ common clash-common
     ghc-typelits-extra,
     ghc-typelits-knownnat
 
+-- step 7.15: the CPU build of save states (SNES_STATES=cpu; Clash takes it
+-- from the .mk's CLASH_EXTRA), for its tests in Haskell (cabal -f states-cpu)
+flag states-cpu
+  description: save states loaded through the 65C816's routine (SNES_STATES_CPU)
+  default:     False
+  manual:      True
+
+-- step 7.16: the DSP-1's bitstream (SNES_CHIP=dsp1, -DSNES_DSP1), for its
+-- tests in Haskell (cabal -f dsp1)
+flag dsp1
+  description: the DSP-1 cartridge's chip in the core (SNES_DSP1)
+  default:     False
+  manual:      True
+
 library
   import:           clash-common
   hs-source-dirs:   src
   -- (Snes.Core: the state record forced each clock in Haskell's
   -- simulations; Clash's HDL runs don't define it: no change there)
   cpp-options:      -DSNES_SIM_STRICT
+  if flag(states-cpu)
+    cpp-options:    -DSNES_STATES_CPU
+  if flag(dsp1)
+    cpp-options:    -DSNES_DSP1
   exposed-modules:
     Snes.Cart
     Snes.Spec
@@ -71,8 +89,12 @@ library
     Snes.Spec.Dsp
     Snes.Spec.Gauss
     Snes.Spec.Ppu
+    Snes.Spec.SaveState
+    Snes.Spec.Upd77c25
+    Snes.Spec.Upd77c25Asm
     -- side track Q: the fast version (Snes.SpecFast.*, the desktop's)
     Snes.SpecFast.Apu
+    Snes.SpecFast.Dsp
     Snes.SpecFast.Cpu
     Snes.SpecFast.Spc700
     Snes.SpecFast.Machine
@@ -81,12 +103,16 @@ library
     Snes.Ppu
     Snes.PpuOoc
     Snes.Dsp
+    Snes.Upd77c25
+    Snes.Dsp1
     Snes.DspOoc
+    Snes.Upd77c25Ooc
     Snes.Bus
     Snes.BusOoc
     Snes.MachineOoc
     Snes.TraceTemplate
     Snes.StateHooks
+    Snes.StateTap
     Snes.Apu
     Snes.RomPort
     Snes.Core
@@ -102,6 +128,16 @@ library
     platform,
     bytestring,
     vector
+
+-- Our DSP-1 test cartridge's firmware (step 7.16d: our own uPD77C25
+-- program), for make snes-asm.
+executable snes-dspfw
+  import:           clash-common
+  hs-source-dirs:   app
+  main-is:          DspFw.hs
+  build-depends:
+    snes,
+    bytestring
 
 -- The cartridge header of each file named (the PS app's check, step 7.11,
 -- follows the same rules).
@@ -160,15 +196,21 @@ test-suite snes-spec
   other-modules:
     DspTest
     DisplayTest
+    SpecRestore
+    Upd77c25Test
+    Upd77c25Lockstep
   ghc-options:      -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     snes,
     platform,
+    w65c816,
     bytestring,
     vector,
     directory,
     filepath,
+    process,
     tasty,
+    tasty-golden,
     tasty-hunit
 
 -- Layer 1, step 7.6: the Clash PPU (Snes.Ppu) in lockstep with the spec's,
@@ -234,6 +276,12 @@ test-suite snes-savestate
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          SaveState.hs
+  if flag(states-cpu)
+    cpp-options:    -DSNES_STATES_CPU
+  other-modules:    LoadCpu
+  if flag(dsp1)
+    cpp-options:    -DSNES_DSP1
+  other-modules:    DspCircuit
   ghc-options:      -O2 -threaded -rtsopts "-with-rtsopts=-M20g -s"
   build-depends:
     snes,
@@ -242,6 +290,8 @@ test-suite snes-savestate
     directory,
     filepath,
     tasty,
+    containers,
+    process,
     tasty-hunit
 
 test-suite snes-core
@@ -252,9 +302,12 @@ test-suite snes-core
   other-modules:
     PpuModel
   ghc-options:      -O2 -threaded -rtsopts "-with-rtsopts=-N4 -M12g"
+  if flag(dsp1)
+    cpp-options:    -DSNES_DSP1
   build-depends:
     snes,
     spc700,
+    w65c816,
     bytestring,
     vector,
     directory,

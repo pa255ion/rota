@@ -16,7 +16,9 @@
 -- 1 L, 0 R; # starts a comment); --shots writes the 640 x 480 picture
 -- every K frames into DIR (frame_NNNNN.png), to follow a game;
 -- --ppu-writes "0D 0E" FROM TO prints each frame's writes to those PPU
--- registers (2100h + n), with the line and dot they land on.
+-- registers (2100h + n), with the line and dot they land on; --dsp1 FILE
+-- gives a DSP cartridge its µPD77C25's firmware (the user's own dump, step
+-- 7.16b: "Snes.Spec.Upd77c25"'s formats).
 module Main (main) where
 
 import Prelude
@@ -34,7 +36,8 @@ import Numeric (showHex)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 
-import Snes.Cart (parseCart)
+import Snes.Cart (Cart (..), Chip (..), parseCart)
+import Snes.Spec.Upd77c25 (firmwareOf)
 import Snes.Spec
 
 main :: IO ()
@@ -44,7 +47,7 @@ main = do
     rom : rest -> run rom (opts rest defaults)
     _ -> putStrLn "usage: snes-run ROM [--frames N] [--pad1 N] [--ipl FILE] [--wav FILE]" >> exitFailure
  where
-  defaults = Opts 60 0 "build/snes/ipl.bin" Nothing Nothing False Nothing Nothing Nothing Nothing 0 Nothing
+  defaults = Opts 60 0 "build/snes/ipl.bin" Nothing Nothing False Nothing Nothing Nothing Nothing 0 Nothing Nothing
   opts ("--frames" : n : r) o = opts r o { oFrames = read n }
   opts ("--pad1" : n : r) o = opts r o { oPad = read n }
   opts ("--pad2" : n : r) o = opts r o { oPad2 = read n }
@@ -57,11 +60,12 @@ main = do
   opts ("--regs" : r) o = opts r o { oRegs = True }
   opts ("--input" : f : r) o = opts r o { oInput = Just f }
   opts ("--shots" : d : k : r) o = opts r o { oShots = Just (d, read k) }
+  opts ("--dsp1" : f : r) o = opts r o { oDsp = Just f }
   opts _ o = o
 
 data Opts = Opts { oFrames :: Int, oPad :: Int, oIpl :: FilePath, oWav :: Maybe FilePath, oPng :: Maybe FilePath, oRegs :: Bool, oVga :: Maybe FilePath, oVga4 :: Maybe FilePath
                  , oInput :: Maybe FilePath, oShots :: Maybe (FilePath, Int), oPad2 :: Int
-                 , oPpuW :: Maybe ([Int], Int, Int) }
+                 , oPpuW :: Maybe ([Int], Int, Int), oDsp :: Maybe FilePath }
 
 run :: FilePath -> Opts -> IO ()
 run path o = do
@@ -71,6 +75,9 @@ run path o = do
   inputs <- maybe (pure []) (fmap parseInput . readFile) (oInput o)
   m <- stToIO (newMachine ipl cart file)
   stToIO (reset m >> setPads m (oPad o) (oPad2 o))
+  forM_ (oDsp o) $ \f -> do
+    fw <- either (\e -> putStrLn (f <> ": " <> e) >> exitFailure) pure . firmwareOf =<< B.readFile f
+    if cartChip cart == Just ChipDsp then stToIO (attachDsp m fw) else putStrLn (path <> ": not a DSP cartridge, --dsp1 ignored")
   forM_ (oPpuW o) $ \_ -> stToIO (traceOn m)
   -- frame by frame: the pad's changes, the shots
   let step k

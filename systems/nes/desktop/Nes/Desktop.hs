@@ -38,7 +38,7 @@ module Nes.Desktop () where
 
 import Prelude
 
-import Control.Monad (when)
+import Control.Monad (forM_, when)
 import Control.Monad.ST (RealWorld, ST, stToIO)
 import qualified Data.ByteString as BS
 import Data.Bits (shiftL, shiftR, (.&.), (.|.))
@@ -59,6 +59,11 @@ import qualified Nes.Spec.Machine as S
 import Nes.Spec.Ppu (ppuFrame, ppuFramesDone)
 import qualified Nes.SpecFast.Machine as F
 import qualified Nes.SpecFast.Ppu as FP
+import qualified Nes.SpecPerf.Machine as P
+import qualified Nes.SpecPerf.Ppu as PP
+import qualified Nes.SpecFast.Mapper as FM
+import qualified Nes.SpecPerf.Mapper as PM
+import Nes.Cartridge (hdBattery, parseHeader)
 import Platform.Snapshot (Field (..), fnv1a, restore, snapshot)
 
 -- | What the library needs of a machine: the fast version's or the
@@ -67,6 +72,8 @@ data Ops = Ops
   { oFrame :: Word8 -> ST RealWorld (U.Vector Int)  -- ^ the buttons, one frame; its cycles' APU outputs, packed as 'F.takeSound'
   , oPicture :: ST RealWorld (U.Vector Word16)
   , oSkip :: Bool -> ST RealWorld ()  -- ^ frame skipping (the fast version only)
+  , oReset :: ST RealWorld ()         -- ^ the console's reset button
+  , oBattery :: Maybe (MU.MVector RealWorld Word8)  -- ^ the PRG RAM, where the cartridge has a battery ('nes_new' sets it; the reference model's: none)
   , oFields :: [Field RealWorld]      -- ^ for save states (the fast version only; none: no states)
   }
 
@@ -85,7 +92,20 @@ fastOps m = Ops
       F.takeSound m
   , oPicture = FP.ppuFrame (F.mPpu m)
   , oSkip = FP.ppuSetSkip (F.mPpu m)
+  , oReset = F.resetMachine m
+  , oBattery = FM.mapperPrgRam (F.mCart m)
   , oFields = F.machineFields m
+  }
+
+-- | The performance version's (the browser's: @reference@ 2).
+perfOps :: P.Machine RealWorld -> Ops
+perfOps m = Ops
+  { oFrame = \pad -> P.setButtons m 1 pad >> P.runFrame m frameCap >> P.takeSoundView m
+  , oPicture = PP.ppuFrame (P.mPpu m)
+  , oSkip = PP.ppuSetSkip (P.mPpu m)
+  , oReset = P.resetMachine m
+  , oBattery = PM.mapperPrgRam (P.mCart m)
+  , oFields = P.machineFields m
   }
 
 refOps :: S.Machine RealWorld -> Ops
@@ -105,6 +125,8 @@ refOps m = Ops
       U.fromList . map pack . reverse <$> readSTRef out
   , oPicture = ppuFrame (S.mPpu m)
   , oSkip = const (pure ())
+  , oReset = S.resetMachine m
+  , oBattery = Nothing
   , oFields = []
   }
  where
@@ -140,6 +162,10 @@ foreign export ccall nes_frame :: StablePtr () -> Word8 -> IO CInt
 foreign export ccall nes_audio :: StablePtr () -> Ptr Int16 -> CInt -> IO CInt
 foreign export ccall nes_pixels :: StablePtr () -> Ptr Word32 -> IO ()
 foreign export ccall nes_skip :: StablePtr () -> CInt -> IO ()
+foreign export ccall nes_reset :: StablePtr () -> IO ()
+foreign export ccall nes_cram_size :: StablePtr () -> IO CSize
+foreign export ccall nes_cram_get :: StablePtr () -> Ptr Word8 -> CSize -> IO ()
+foreign export ccall nes_cram_set :: StablePtr () -> Ptr Word8 -> CSize -> IO ()
 foreign export ccall nes_state_save :: StablePtr () -> IO CSize
 foreign export ccall nes_state_get :: StablePtr () -> Ptr Word8 -> CSize -> IO ()
 foreign export ccall nes_state_load :: StablePtr () -> Ptr Word8 -> CSize -> IO CInt
@@ -149,20 +175,28 @@ desk = deRefStablePtr . castPtrToStablePtr . castStablePtrToPtr
 
 -- | 0 and the handle in @out@, or -1 (the file refused: its header, an
 -- unsupported mapper); @reference@ 1 runs the reference model (the
--- desktop's --reference).
+-- desktop's --reference), 2 the performance version ("Nes.SpecPerf", the
+-- browser's), anything else the fast version.
 nes_new :: Ptr Word8 -> CSize -> CInt -> Ptr (StablePtr ()) -> IO CInt
 nes_new p n reference out = do
   rom <- BS.pack <$> mapM (peekElemOff p) [0 .. fromIntegral n - 1]
-  eops <- stToIO $ if reference /= 0
-    then fmap refOps <$> S.newMachine rom
-    else do
+  eops <- stToIO $ case reference of
+    1 -> fmap refOps <$> S.newMachine rom
+    2 -> do
+      em <- P.newMachine rom
+      case em of
+        Left e -> pure (Left e)
+        Right m -> Right (perfOps m) <$ P.setSound m True
+    _ -> do
       em <- F.newMachine rom
       case em of
         Left e -> pure (Left e)
         Right m -> Right (fastOps m) <$ F.setSound m True
   case eops of
     Left _ -> pure (-1)
-    Right ops -> do
+    Right ops0 -> do
+      -- (battery saves only for a cartridge with a battery)
+      let ops = if either (const False) hdBattery (parseHeader rom) then ops0 else ops0 { oBattery = Nothing }
       d <- stToIO (Desk ops <$> newSTRef 0 <*> newSTRef (Filt start start start 15 0 False) <*> MU.new (2 * audioCap) <*> newSTRef 0
                      <*> newSTRef BS.empty <*> pure (fnv1a rom))
       sp <- newStablePtr d
@@ -214,13 +248,37 @@ cyclesOut d lv = do
   acc0 <- readSTRef (dAcc d)
   k0 <- readSTRef (dCount d)
   let n = U.length lv
-      go !i !a !b !c !lt !gap !ultra !acc !k
+      -- (pw, px: the last cycle's level and its mix: a run of the same
+      -- level, the triangle's ultrasonic flag unable to change, mixes the
+      -- same; the arithmetic is the same either way)
+      go !i !a !b !c !lt !gap !ultra !acc !k !pw !px
         | i >= n = do
             writeSTRef (dFilt d) (Filt a b c lt gap ultra)
             writeSTRef (dAcc d) acc
             writeSTRef (dCount d) k
+        -- (side track W: a stretch of the same level, the triangle not
+        -- ultrasonic, up to the next 48 kHz instant: through the filter in
+        -- closed form ('stretch'), not cycle by cycle; the same filter, its
+        -- rounding a little different)
+        | not ultra && U.unsafeIndex lv i == pw
+        , let toSample = (cpuHz - acc + 47999) `div` 48000
+              run !j | j < n && j - i < min stretchMax toSample && U.unsafeIndex lv j == pw = run (j + 1)
+                     | otherwise = j - i
+              m = run i
+        , m >= 2 = do
+            let (!a', !b', !c') = stretch m px a b c
+                acc1 = acc + 48000 * m
+            if acc1 < cpuHz
+              then go (i + m) a' b' c' lt (gap + m) False acc1 k pw px
+              else do
+                when (k < audioCap) $ do
+                  let s = fromIntegral (max (-32767) (min 32767 (round (b' - c') :: Int))) :: Int16
+                  MU.unsafeWrite (dAudio d) (2 * k) s
+                  MU.unsafeWrite (dAudio d) (2 * k + 1) s
+                go (i + m) a' b' c' lt (gap + m) False (acc1 - cpuHz) (if k < audioCap then k + 1 else k) pw px
         | otherwise = do
             let w = U.unsafeIndex lv i
+                same = w == pw && (not ultra || gap + 1 < 5)
                 p = w .&. 31
                 t = (w `shiftR` 5) .&. 15
                 ns = (w `shiftR` 9) .&. 15
@@ -232,20 +290,49 @@ cyclesOut d lv = do
                   | gap' >= 5 = False
                   | otherwise = ultra
                 tOut = if ultra' then 7 else t
-                x = fromIntegral (U.unsafeIndex pulseLevels p + U.unsafeIndex tndLevels (tOut * 2048 + ns * 128 + dm)) :: Double
+                x = if same then px else fromIntegral (U.unsafeIndex pulseLevels p + U.unsafeIndex tndLevels (tOut * 2048 + ns * 128 + dm)) :: Double
                 a' = a + (x - a) * lpA
                 b' = b + (a' - b) * lpA
                 c' = c + (b' - c) * dcA
                 acc1 = acc + 48000
             if acc1 < cpuHz
-              then go (i + 1) a' b' c' t gap' ultra' acc1 k
+              then go (i + 1) a' b' c' t gap' ultra' acc1 k w x
               else do
                 when (k < audioCap) $ do
                   let s = fromIntegral (max (-32767) (min 32767 (round (b' - c') :: Int))) :: Int16
                   MU.unsafeWrite (dAudio d) (2 * k) s
                   MU.unsafeWrite (dAudio d) (2 * k + 1) s
-                go (i + 1) a' b' c' t gap' ultra' (acc1 - cpuHz) (if k < audioCap then k + 1 else k)
-  go 0 a0 b0 c0 lt0 gap0 ultra0 acc0 k0
+                go (i + 1) a' b' c' t gap' ultra' (acc1 - cpuHz) (if k < audioCap then k + 1 else k) w x
+  go 0 a0 b0 c0 lt0 gap0 ultra0 acc0 k0 (-1) 0
+
+-- | The filter's state after @m@ cycles of the level @x@ (a stretch, at
+-- most 'stretchMax'): with r = 1 - lpA, s = 1 - dcA and the errors from x
+-- A = a - x, B = b - x, F = c - x, cycle by cycle a gives r^m A, b gives
+-- r^m (B + m lpA A), and c gives s^m (F + dcA (B S1 + lpA A S2)), with S1
+-- and S2 the sums of q^j and j q^j for j = 1 to m, q = r / s.
+stretch :: Int -> Double -> Double -> Double -> Double -> (Double, Double, Double)
+stretch m x a b c =
+  let ea = a - x
+      eb = b - x
+      ec = c - x
+      rm = U.unsafeIndex powR m
+  in ( x + rm * ea
+     , x + rm * (eb + fromIntegral m * lpA * ea)
+     , x + U.unsafeIndex powS m * (ec + dcA * (eb * U.unsafeIndex sumQ m + lpA * ea * U.unsafeIndex sumJQ m)) )
+{-# INLINE stretch #-}
+
+stretchMax :: Int
+stretchMax = 64
+
+powR, powS, sumQ, sumJQ :: U.Vector Double
+powR = U.generate (stretchMax + 1) (\j -> (1 - lpA) ^ j)
+powS = U.generate (stretchMax + 1) (\j -> (1 - dcA) ^ j)
+sumQ = U.scanl' (+) 0 (U.generate stretchMax (\j -> ((1 - lpA) / (1 - dcA)) ^ (j + 1)))
+sumJQ = U.scanl' (+) 0 (U.generate stretchMax (\j -> fromIntegral (j + 1) * ((1 - lpA) / (1 - dcA)) ^ (j + 1)))
+{-# NOINLINE powR #-}
+{-# NOINLINE powS #-}
+{-# NOINLINE sumQ #-}
+{-# NOINLINE sumJQ #-}
 
 -- | 'mixLevel' as two unboxed tables, its own values ('mixLevel' walks
 -- lists; measured, the difference is small): the pulse sum 0 to 30, and
@@ -260,7 +347,11 @@ nes_audio :: StablePtr () -> Ptr Int16 -> CInt -> IO CInt
 nes_audio sp out cap = do
   d <- desk sp
   n <- min (fromIntegral cap) <$> stToIO (readSTRef (dCount d))
-  mapM_ (\i -> stToIO (MU.read (dAudio d) i) >>= pokeElemOff out i) [0 .. 2 * n - 1]
+  -- (a loop, not a list of the indices)
+  let go !i
+        | i >= 2 * n = pure ()
+        | otherwise = stToIO (MU.unsafeRead (dAudio d) i) >>= pokeElemOff out i >> go (i + 1)
+  go 0
   pure (fromIntegral n)
 
 nes_pixels :: StablePtr () -> Ptr Word32 -> IO ()
@@ -283,6 +374,31 @@ nes_skip :: StablePtr () -> CInt -> IO ()
 nes_skip sp on = do
   d <- desk sp
   stToIO (oSkip (dOps d) (on /= 0))
+
+-- | The battery-backed RAM (side track W: the page's battery saves, as
+-- gb_cram_*): the PRG RAM when the header says the cartridge has a
+-- battery (iNES flags 6 bit 1), else none (size 0).
+nes_cram_size :: StablePtr () -> IO CSize
+nes_cram_size sp = maybe 0 (fromIntegral . MU.length) . oBattery . dOps <$> desk sp
+
+nes_cram_get :: StablePtr () -> Ptr Word8 -> CSize -> IO ()
+nes_cram_get sp out n = do
+  o <- dOps <$> desk sp
+  forM_ (oBattery o) $ \ram ->
+    mapM_ (\i -> stToIO (MU.read ram i) >>= pokeElemOff out i) [0 .. min (fromIntegral n) (MU.length ram) - 1]
+
+nes_cram_set :: StablePtr () -> Ptr Word8 -> CSize -> IO ()
+nes_cram_set sp p n = do
+  o <- dOps <$> desk sp
+  forM_ (oBattery o) $ \ram ->
+    mapM_ (\i -> peekElemOff p i >>= stToIO . MU.write ram i) [0 .. min (fromIntegral n) (MU.length ram) - 1]
+
+-- | The console's reset button (side track W: the page's RESET), pressed
+-- between two frames.
+nes_reset :: StablePtr () -> IO ()
+nes_reset sp = do
+  d <- desk sp
+  stToIO (oReset (dOps d))
 
 -- * Save states (Q.8)
 

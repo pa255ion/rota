@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rota</title>
+<style>
+  /* the ROTA palette (docs/brand.md): ink, paper, amber, teal */
+  :root { color-scheme: dark; --ink: #0E0B14; --paper: #F4ECD8; --amber: #F7A41D; --teal: #22A699; --dim: #8f8778; }
+  html, body { margin: 0; min-height: 100%; background: var(--ink); color: var(--paper); font: 14px/1.5 ui-monospace, monospace; }
+  body { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; box-sizing: border-box; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: 0.3em; color: var(--amber); }
+  h1 span { color: var(--teal); }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: center; }
+  label { cursor: pointer; }
+  select, button, input[type=file]::file-selector-button { font: inherit; color: var(--ink); background: var(--amber); border: 0; padding: 4px 12px; cursor: pointer; }
+  select { background: var(--paper); }
+  canvas { display: block; image-rendering: pixelated; background: #000; outline: 1px solid #2a2433; }
+  canvas:fullscreen { width: auto !important; height: 100% !important; margin: auto; }
+  #status { min-height: 1.5em; color: var(--dim); text-align: center; }
+  #status.error { color: #ff6a55; }
+  #speed-out { color: var(--teal); min-height: 1.5em; }
+  details { box-sizing: border-box; width: min(720px, 100%); }
+  summary { cursor: pointer; color: var(--amber); }
+  kbd { color: var(--ink); background: var(--paper); padding: 0 4px; }
+  #keys { border-collapse: collapse; margin: 6px 0; }
+  #keys td { padding: 2px 14px 2px 0; }
+  #keys td:nth-child(2) { color: var(--amber); min-width: 16ch; }
+  #keys button { padding: 0 8px; }
+  a { color: var(--teal); }
+</style>
+</head>
+<body>
+<h1>R<span>O</span>TA</h1>
+<div class="bar">
+  <label>System
+    <select id="system">
+      <option value="auto">by the file's extension</option>
+      <option value="gg">Game Gear</option>
+      <option value="sms">Master System</option>
+      <option value="gb">Game Boy / Color</option>
+      <option value="nes">NES</option>
+      <option value="snes">Super Nintendo</option>
+      <option value="a800">Atari 800XL</option>
+      <option value="chip8">CHIP-8</option>
+    </select>
+  </label>
+  <input id="file" type="file" accept=".gg,.sms,.gb,.gbc,.nes,.sfc,.smc,.xex,.car,.rom,.cas,.ch8,.c8,.bin">
+  <label><input id="splash" type="checkbox" checked> ROTA boot splash</label>
+  <label><input id="mute" type="checkbox"> mute</label>
+  <label><input id="speed" type="checkbox"> speed</label>
+  <button id="reset" type="button" title="the NES: its reset button; the others: the game restarted (its battery save kept); skips the splash">reset</button>
+  <button id="fullscreen" type="button">fullscreen</button>
+</div>
+<canvas id="screen" width="160" height="144"></canvas>
+<div id="status"></div>
+<div id="speed-out" hidden>measuring…</div>
+<details>
+  <summary>keys: <span id="keys-title"></span></summary>
+  <table id="keys"></table>
+  <p><button id="keys-reset" type="button">defaults</button>
+     Kept in this browser, per system (the panel shows the game's). A gamepad works too:
+     its d-pad or stick, its face buttons, Select and Start.</p>
+</details>
+<details>
+  <summary>notes</summary>
+  <p>The game stays on your computer: it is read by this page, never uploaded. Battery saves are kept
+     in this browser (IndexedDB), per game. The ROTA splash plays before the game when ticked; any key skips it.
+     <b>reset</b> presses the NES's reset button; the other systems have none (or none modelled), so their
+     game starts again, its battery save written first and loaded again, without the splash.</p>
+  <p>The Game Gear, the Master System (with its FM unit), the Game Boy and Game Boy Color, the NES,
+     the Super Nintendo, the Atari 800XL and CHIP-8 (the COSMAC VIP's) run from their models, written in Haskell and compiled to
+     WebAssembly; the same models are the specification of an FPGA re-implementation. (The Super Nintendo draws its pictures on a second
+     core of your computer, one frame behind the game; on a slow machine, frames that can't be shown
+     aren't drawn. Its sound CPU boots our own boot ROM, not Nintendo's.)
+     <a href="https://github.com/pa255ion/rota">Source</a>.</p>
+  <p>The Atari 800XL takes programs (.xex), cartridges (.car, or a raw .rom) and cassettes (.cas); without
+     one, BASIC. It boots AltirraOS and Altirra BASIC, Avery Lee's free replacements for Atari's ROMs
+     (<a href="altirra-notice.txt">their notice</a>). Its keyboard is your keyboard, laid out as the
+     800XL's where it has the key: <code>'</code> is +, <code>\</code> is *, <code>[ ]</code> are &lt; &gt;,
+     <code>`</code> is ESC; F1 HELP, F2 START, F3 SELECT, F4 OPTION, F6 the inverse key, F8 BREAK; the
+     arrows move the cursor. The joystick is on the keypad (8 4 6 2, 0 or right Alt the trigger) or a
+     gamepad; F9 pauses.</p>
+</details>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -2076,6 +2076,11 @@ LINK_SYSTEM += $(if $(filter sms,$(SYSTEM)),--system sms $(if $(BIOS),--bios $(B
 SD_SNES_ROMS ?= roms/snes/games roms/snes/opensnes roms/snes/local build/snes/asm
 sd: export SNES_DIRS = $(SD_SNES_ROMS)
 sd-sync: export SNES_DIRS = $(SD_SNES_ROMS)
+# the DSP-1's firmware (M7 step 7.16d): the user's own dump as /snes/dsp1.rom
+# (systems/snes/sd.sh), e.g. SNES_DSP1="$HOME/Documents/emulation_clash/local/firmware/DSP1 B (Enhancement Chip).bin"
+SNES_DSP1 ?=
+sd: export SNES_DSP1 := $(SNES_DSP1)
+sd-sync: export SNES_DSP1 := $(SNES_DSP1)
 SD_SYSTEMS += snes
 LINK_SYSTEM += $(if $(filter snes,$(SYSTEM)),--system snes)
 
@@ -2148,6 +2153,13 @@ nes-restore: nix-shell
 	$(ZIG_BUILD) nes-restore --prefix build
 test: nes-restore
 
+# The Super Nintendo's restore routine for a state table (M7 step 7.15a);
+# snes-spec runs it (build/host/snes-restore)
+.PHONY: snes-restore
+snes-restore: nix-shell
+	$(ZIG_BUILD) snes-restore --prefix build
+test: snes-restore
+
 # Save states on the Game Gear and the Master System at layer 4 (side
 # track N, N.2): the Arty's tops (with the hooks) on a PS link script each,
 # the bytes read back compared (--expect-ps-hex): the freeze, the status,
@@ -2218,11 +2230,22 @@ TEST_TARGETS += $(if $(filter snes,$(SYSTEM)),w65c816 spc700)
 # "serial: c ..." lines. It writes the same build folder as the normal
 # build: rebuild without it before a release.
 CLASH_FLAGS += $(if $(and $(filter snes,$(SYSTEM)),$(filter 1,$(SNES_TRACE))),-DSNES_TRACE)
+# (SNES_TRACE=fast: the same, a line every 1,500 clocks, for layer 4's
+# --ps-bytes-out: M7 step 7.16d's bring-up)
+CLASH_FLAGS += $(if $(and $(filter snes,$(SYSTEM)),$(filter fast,$(SNES_TRACE))),-DSNES_TRACE -DSNES_TRACE_FAST)
 
 # Our own SPC700 boot ROM (M7 step 7.4; docs/systems/snes.md): 64 bytes,
 # build/snes/ipl.bin, read by the model and (later) the core. The user's
 # own dump replaces it on the card; Nintendo's is never fetched.
 SNES_IPL = build/snes/ipl.bin
+snes-asm: $(SNES_IPL)
+# our DSP-1 test cartridge's firmware (M7 step 7.16d; our own uPD77C25
+# program, for systems/snes/test/asm/dsp1.s)
+SNES_DSPFW = build/snes/asm/dsptest.rom
+snes-asm: $(SNES_DSPFW)
+$(SNES_DSPFW): systems/snes/src/Snes/Spec/Upd77c25Asm.hs systems/snes/app/DspFw.hs
+	mkdir -p $(@D)
+	$(CABAL) run -v0 snes-dspfw -- $@
 snes-asm: $(SNES_IPL)
 $(SNES_IPL): systems/snes/ipl/ipl.s
 	mkdir -p $(@D)
@@ -2252,9 +2275,14 @@ build/snes/asm/dsprace.sfc: build/snes/spc/dsprace.bin
 # build/snes/ooc/<top>/reports/.
 SNES_OOC      ?= Snes.PpuOoc
 SNES_OOC_TOP  ?= snes_ppu_ooc
-SNES_OOC_DIR   = build/snes/ooc/$(SNES_OOC)$(if $(filter hier,$(SNES_OOC_MODE)),-hier)
+SNES_OOC_DIR   = build/snes/ooc/$(SNES_OOC)$(if $(filter hier,$(SNES_OOC_MODE)),-hier)$(if $(filter -DSNES_DSP1,$(SNES_OOC_EXTRA)),-dsp1)
 # SNES_OOC_MODE=hier keeps the hierarchy (a row per Clash component)
 SNES_OOC_MODE ?= flat
+# (-fclash-spec-limit=100: the core's record, as the system's build since
+# 7.14b, systems/snes/arty-z7-20.mk)
+# SNES_OOC_EXTRA: more Clash flags (-DSNES_DSP1: the DSP-1's build, in a
+# folder of its own, <top>-hier-dsp1)
+SNES_OOC_EXTRA ?=
 # make snes-ooc-hdl is its Clash half alone (for the remote worker:
 # WRUN_PULL=build/snes/ooc/<top>/verilog), make snes-ooc-run the Vivado half.
 .PHONY: snes-ooc snes-ooc-hdl snes-ooc-run
@@ -2265,7 +2293,7 @@ snes-ooc-hdl: nix-shell
 	mkdir -p $(SNES_OOC_DIR)/obj $(SNES_OOC_DIR)/verilog
 	LOCK_DIR="$(LOCK_DIR)" tools/clash-slot.sh -- $(PROGRESS) clash ooc:$(SNES_OOC) -- \
 	  clash --verilog -isystems/snes/src -iplatform/src -icpus/w65c816/src -icpus/spc700/src -outputdir $(SNES_OOC_DIR)/obj \
-	  -fclash-hdldir $(SNES_OOC_DIR)/verilog -fclash-no-cache -fclash-clear $(CLASH_FLAGS) $(if $(filter hier,$(SNES_OOC_MODE)),-DSNES_HIER) $(SNES_OOC)
+	  -fclash-hdldir $(SNES_OOC_DIR)/verilog -fclash-no-cache -fclash-clear $(CLASH_FLAGS) -fclash-spec-limit=100 $(SNES_OOC_EXTRA) $(if $(filter hier,$(SNES_OOC_MODE)),-DSNES_HIER) $(SNES_OOC)
 snes-ooc-run:
 	@command -v vivado >/dev/null || test -f "$(VIVADO_SETTINGS)" || \
 	  { echo "make snes-ooc: no vivado on PATH and VIVADO_SETTINGS=$(VIVADO_SETTINGS) not found" >&2; exit 1; }
@@ -2324,6 +2352,37 @@ CI_AFTER += savestate-snes
 ci-savestate-snes: snes-asm
 	$(MAKE) --no-print-directory resim SYSTEM=snes BOARD=arty-z7-20 ROM=build/snes/asm/tone.sfc FRAMES=24 \
 	  SIM_GOLDEN= SIM_PS=systems/snes/test/ps/state.ps SIM_ARGS="--expect-ps-hex $(abspath systems/snes/test/ps/state.hex) --expect-tone 997.4 --expect-hdmi-tone 997.4"
+
+# The DSP-1's bitstream at layer 4 (M7 step 7.16d; SNES_CHIP=dsp1, its
+# own BUILD folder beside the default's): lint; our DSP-1 test cartridge
+# with our firmware as the companion in DDR (0x02700000; one image with
+# the ROM, the harness's DDR taking one file: the .mk's ddr-dsp1.bin): the chip's load
+# through the ROM port, the 64 rounds and the timing probe, its verdict
+# the backdrop, green (golden/vga/dsp1.png: snes-run --dsp1, the spec's
+# 13th frame for the harness's 12).
+SNES_DSP1_BUILD = build/arty-z7-20/snes-dsp1
+CI_LINT += arty-snes-dsp1
+.PHONY: ci-arty-snes-dsp1
+ci-arty-snes-dsp1: snes-asm
+	$(MAKE) --no-print-directory lint SYSTEM=snes BOARD=arty-z7-20 SNES_CHIP=dsp1 BUILD=$(SNES_DSP1_BUILD)
+	$(MAKE) --no-print-directory sim SYSTEM=snes BOARD=arty-z7-20 SNES_CHIP=dsp1 BUILD=$(SNES_DSP1_BUILD) ROM=build/snes/asm/dsp1.sfc FRAMES=12 \
+	  SIM_GOLDEN=systems/snes/test/golden/vga/dsp1.png
+
+# The same for the CPU build (M7 step 7.15c; SNES_STATES=cpu, its own
+# BUILD folder beside the default's): the freeze, the status (version 2),
+# the table window read through, the memories, the sound module's chain
+# (428 bytes) read round twice, the tone after (state-cpu.ps). A load
+# through the CPU is snes-savestate's (cabal -f states-cpu, FULL).
+SNES_CPU_BUILD = build/arty-z7-20/snes-cpu
+CI_AFTER += savestate-snes-cpu
+.PHONY: ci-savestate-snes-cpu
+ci-savestate-snes-cpu: snes-asm
+	$(MAKE) --no-print-directory lint SYSTEM=snes BOARD=arty-z7-20 SNES_STATES=cpu BUILD=$(SNES_CPU_BUILD)
+	$(MAKE) --no-print-directory sim SYSTEM=snes BOARD=arty-z7-20 SNES_STATES=cpu BUILD=$(SNES_CPU_BUILD) ROM=build/snes/asm/tone.sfc FRAMES=24 \
+	  SIM_GOLDEN= SIM_PS=systems/snes/test/ps/state-cpu.ps SIM_ARGS="--expect-ps-hex $(abspath systems/snes/test/ps/state-cpu.hex) --expect-tone 997.4 --expect-hdmi-tone 997.4"
+	# (7.15d: a load through the CPU, the overlay's routine run: load-cpu.ps)
+	$(MAKE) --no-print-directory resim SYSTEM=snes BOARD=arty-z7-20 SNES_STATES=cpu BUILD=$(SNES_CPU_BUILD) ROM=build/snes/asm/tone.sfc FRAMES=12 \
+	  SIM_GOLDEN= SIM_PS=systems/snes/test/ps/load-cpu.ps SIM_ARGS="--expect-ps-hex $(abspath systems/snes/test/ps/load-cpu.hex)"
 
 # The same on the ZedBoard (the second board; make ci ALL=1): VGA (the
 # goldens on its 4-bit pins, golden/vga4) and HDMI through the ADV7511

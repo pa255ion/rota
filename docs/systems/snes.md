@@ -493,6 +493,14 @@ build switch picks one.
   positions, BRR buffers, echo position and counters): a write path for
   that record only, so sound resumes exactly. Everything else goes
   through the two CPUs' routines.
+  - **Changed (the user, 2026-10-27): the whole sound module's record is
+    written directly** (3,418 bits: the DSP's 2,514, the SPC700's 119,
+    the timers, ports, its clock against the master clock, and the
+    sample in work with its pending writes). That is about 900 bits more
+    than the DSP's alone. In exchange there is no SPC700 routine and no
+    second overlay. A save needs no SPC700 instruction boundary and no
+    idle sound module. The sound module is held from the load until the
+    65C816's overlay goes off, then runs on from the saved record.
 - **Exact, else refuse:** the routine ends on the saved master clock (the
   line and the dot), as the NES's; a state the generator can't place is
   refused before the game is touched.
@@ -552,14 +560,328 @@ build switch picks one.
   restore test in the spec. Save from the spec, restore through the
   routine run in the spec, then compare the state field by field and
   the next frames. Mutants of the generator must fail.
-- **7.15b**, the SPC700's routine and the DSP's direct record in the
-  same test, on ROMs with sound.
+- **7.15b**, the sound module's direct record in the same test, on ROMs
+  with sound (the samples after the restore, the SPC700, ARAM compared).
 - **7.15c**, the circuit: the tap, the overlays, the DSP's write path,
   the switch; the table in lockstep with the spec's; a layer 4 chain
   (`ci-savestate-snes-cpu`); LUTs and timing.
 - **7.15d**, the PS: `Spec.restore` with the build and the fills, the
   OCM and stack checks.
 - **7.15e**, the board check (the user).
+
+**As built (7.15a, 2026-10-27).** Differences from the plan:
+- **The table** (`Snes.Spec.SaveState`; 133 fields of 4 bytes, 532 bytes;
+  golden `test/golden/state-table.txt`) holds:
+  - the 65C816's registers and interrupt lines (`cpuLines`, new in
+    `W65c816.Spec`);
+  - the 5A22's and the PPU's slots, and the PPU's registers;
+  - STAT77;
+  - **the master clock mod 8**. A DMA starts on a multiple of 8 clocks,
+    and an odd-field frame without interlace is 4 clocks short, so the
+    same line and dot come at either phase. Without this field, runs
+    parted by 4 clocks about 50,000 instructions after a restore.
+- **The overlay's low window** ($0000-$1FFF) maps mod $800 **with bit 10
+  inverted**. A stack near $1FFF would otherwise put its bytes on the
+  vectors.
+- **The routine ends with PLB, PLP, `JML [ptr]`** (not RTI). Only DBR and P
+  sit at the saved stack, and the pointer is in the code. D and Y come
+  first, by PLD from q.
+- **OAM's address** is moved on after V-blank's reload by **a DMA of
+  $2138 reads** (B bus to A, A address $2100, where a DMA writes nothing),
+  with channel 0 put back from the slot's DMA bytes. Writing OAM's own
+  bytes again was 26 lines too slow for games that DMA OAM in V-blank.
+- **The CGRAM latch** keeps its byte after a colour's write, so it is set
+  whether or not the flip-flop is.
+- **Limits** (left out of the comparison):
+  - the VRAM read latch, open bus, STAT77's sprite flags;
+  - HDMA's per-frame channel flags;
+  - the pads' read-back;
+  - the data ports' and address registers' bytes *as written* (2104h,
+    2116h-2119h, 2121h, 2122h; the addresses themselves are put back).
+- **A state the generator can't place is refused:**
+  - in STP;
+  - a stack byte on a vector the routine needs;
+  - the multiplier/divider results from no single operation;
+  - no schedule.
+- **The sound module** is moved whole (`moveApu`): the board's direct
+  write, made after the routine as the hardware holds the module until
+  then. Its clock's phase is rebased (`sApuPhase`, `sApuBase`: 0 from
+  power-on, no change otherwise). **7.15b** (2026-10-27): the test also
+  compares the samples made after the restore, the SPC700's registers
+  and ARAM. All 39 cases pass. Mutants: the phase not rebased fails 6
+  cases; the module not moved fails 3 (the ROMs with a sound program).
+- **Gate:** `snes-spec`, "loading through the CPU" — 17 ROMs × 2 moments
+  (OpenSNES and krom, games among them): the table field by field, every
+  memory, 100,000 instructions alike, the next frames' pictures. All 35
+  pass; the generator's mutants (see the log) must each fail.
+
+**As built (7.15c, the circuit; 2026-10-28):**
+- **The switch:** `SNES_STATES=direct` (the default), `cpu` or `none`, in
+  the SNES's `.mk` files (`CLASH_EXTRA`; the Verilog's cache key holds
+  it). Haskell's side is `cabal -f states-cpu`.
+- **The tap** (`Snes.StateTap`): the table's 130 fields from the core's
+  registers. Its window is 552 bytes: the table, then OAM's high table
+  (registers in the circuit, so the routine writes it back through
+  2104h).
+  - snes-core checks it against the spec's table at every frame's rest
+    moment, at the instruction's end on the same master clock.
+  - At an instruction's last clock (`StDone`) the core hasn't applied
+    the write-back yet. The first tap applied `finishOp` itself, which
+    copied the CPU's ALU (about 4,500 LUTs). Instead, the CPU build's
+    freeze comes after **a clock with no master clock**
+    (`StCtl.stFinish`, as a pace stall). In it the instruction finishes,
+    with time still at its end.
+- **The overlay:** a new source (`SrcOvl`) in the 5A22's single address
+  decode. It answers bank 00h's 0000h-1FFFh (bit 10 inverted) and
+  8000h-FFFFh from a 2 KiB block RAM while armed. Its arm and end
+  address live in the hooks, outside the core's reset. It turns off once
+  the instruction that read the end address has ended (`scOvlDone`).
+- **The sound module** has a register of its own in the CPU build, with
+  a clock enable for the hold (from the load until the routine's last
+  clock) and for the freeze. Its chain is that record plus 6 pad bits:
+  428 bytes. The first version held and shifted it inside the shared
+  record's register and cost two LUTs a bit.
+- **The freeze** (`atRestCpu`): at rest, the CPU at an instruction's
+  end, not stopped, no DMA owed, the multiplier idle, the pads' read
+  done, no interrupt seen or owed, in V-blank; at once while held (a
+  load).
+- **LUTs (Arty, 2026-10-28):**
+
+  | Build | LUTs | Above the base | WNS |
+  |---|---|---|---|
+  | none | 26,865 (50.5 %) | — | +0.459 ns |
+  | cpu | 31,306 (58.9 %) | +4,441 | +1.920 ns |
+  | direct | 36,112 (67.9 %) | +9,247 | +0.048 ns |
+  | direct, 2026-11-02 (the pace's resync, the table's port) | 37,256 (70.0 %) | +10,391 | +1.287 ns |
+
+  (The cpu row predates the pace's fix. Answering the table's port with
+  0 in the direct build, which never asks for it, gave **40,867 LUTs**
+  (76.8 %, one DSP more). That was reverted; the same source built
+  twice gave 37,256 both times.)
+
+- **A simulation fix:** the overlay's block RAM answers undefined before
+  its first read in Clash's simulation, and the 5A22 took that in
+  (`simByte`, as `simDefined`).
+- **The CPU build's state space (7.15d, 2026-11-02):**
+  - 0x00000 holds the record: the table window, 552 bytes (the table,
+    then OAM's high table), read only. The status gives it as the
+    record's size. savestate.zig's loads through the CPU take the record
+    as the table.
+  - 0x00800 holds the chain, the sound module's record (428 bytes). It is
+    a section of the PS's Spec (`snes_state.spec_cpu`), written back as it
+    was read.
+  - The overlay is at 0x06000 and its arm at 0x01F10, as before.
+- **A load through the CPU at layer 4 (7.15d, 2026-11-06;
+  `ci-savestate-snes-cpu`'s second run, `test/ps/load-cpu.ps`):** in the
+  PS app's order, the game frozen, then held. The overlay gets a small
+  routine (LDA #$42, STA $0310, JMP to a loop written into WRAM), with
+  the reset vector and its end armed. Then the core is let go, frozen
+  again, and WRAM read back: 42, and the loop.
+  - **Found:** `Snes.Machine` never resets a frozen core when it is held
+    (the direct build writes its state into the frozen core). So the
+    CPU build's routine never ran, and the frozen game simply went on.
+    Clash's gate (`LoadCpu`) loads a fresh core, frozen from its
+    power-on, so it couldn't see this.
+  - **The fix (the CPU build only):** a hold owes the core one reset,
+    frozen or not. It lasts a clock or two, and the state the PS writes
+    after it stays.
+- **The pace after a hold (both builds; found at layer 4, 2026-10-29):**
+  - The bug: after the menu's pause or a save, the core was a frame or
+    more behind the output, counted mod 4. It ran at a master clock a
+    pixel clock (17% fast) for up to three frames to catch up, and the
+    tone came out at 1025-1059 Hz instead of 997.4. The direct build's
+    chain passed only because its thaw came late in the run.
+  - The fix (`Snes.Display`): while held, the output's frame count is
+    kept level with the core's, so after a hold the core waits for the
+    output instead. The picture is black until the core's first frame
+    in step (`pcBlank`), and the run-on to rest is paced too.
+  - The check: snes-spec, "after holds", where the old pace takes
+    420,000 master clocks in a 357,368 frame. The core alone was never
+    wrong: a CPU-build freeze and thaw in Clash's simulation gave the
+    same samples as no freeze.
+
+## The DSP-1 (step 7.16; planned 2026-11-03)
+
+The ladder's first rung (below): the NEC µPD77C25 of Super Mario Kart
+and Pilotwings, as a bitstream of its own (`snes-dsp1`, the Arty's),
+the base console plus the chip.
+
+**The user's decisions (2026-11-03):**
+- **The firmware** is the user's own dump: `local/firmware/DSP1 B
+  (Enhancement Chip).bin`, 8,192 bytes, git-ignored. It holds the
+  program ROM (2,048 × 24 bits) and the data ROM (1,024 × 16).
+  - It is never fetched or committed. Tests use our own µPD77C25
+    programs and skip the firmware's cases without it.
+  - The user allows a clone of the retrobios repository
+    (github.com/Abdess/retrobios) into a git-ignored folder for other
+    firmware, such as the original DSP-1 for Pilotwings.
+- **Save states:** yes, direct, as the base console's 7.14. The
+  µPD77C25's registers join the chain, and its RAM (256 × 16) is a
+  section.
+- **The board check:** Super Mario Kart and Pilotwings. Neither game is
+  in `roms/snes` yet: the user's own files, into `roms/snes/local`.
+
+**The chip** (to verify at 7.16a against NEC's µPD77C25 data sheet and
+fullsnes; bsnes's uPD96050 core only as a check of values, never code):
+- **Speed:** 7.6 MHz, one instruction a cycle: one about every 2.83
+  master clocks, as a fractional enable on the master clock.
+- **Registers:** the accumulators A and B with their flags, K and L into
+  the 16 × 16 multiplier (M and N out), TR and TRB, DP and RP, the
+  4-level stack, DR and SR.
+- **The instructions:** OP and RT (ALU plus moves), JP (jumps and
+  calls), LD (immediate).
+- **The SNES's side** is the data register (DR, 8 or 16 bits) and the
+  status register (SR; RQM, DRC, DRS) at the cartridge's addresses:
+  - LoROM: banks 30h-3Fh, 8000h-BFFFh DR and C000h-FFFFh SR (the
+    larger ROMs' map to verify);
+  - HiROM: banks 00h-1Fh, 6000h-6FFFh DR and 7000h-7FFFh SR.
+- **Budget:** 2,000 to 4,000 LUTs and 2 to 3 block RAMs against the
+  Arty's base, 37,256 LUTs (70.0 %) with direct save states. About 75 %
+  in all.
+
+**Steps:**
+- **7.16a, the chip's spec** (`Snes.Spec.Upd77c25`):
+  - every instruction from the data sheet, tested with our own
+    programs (a small assembler in the tests);
+  - with the dump, the DSP-1's commands checked against fullsnes's
+    descriptions (multiply, inverse, the rotations).
+- **7.16b, the cartridge in the spec:**
+  - the DSP-1's mapping from the header's type byte ($FFD6) and map
+    mode, and the firmware file;
+  - the two games run on the spec, on the desktop (side Q's emulator):
+    Super Mario Kart's first race, Pilotwings' first lesson.
+- **7.16c, the circuit** (`Snes.Upd77c25` in Clash):
+  - in lockstep with the spec (as snes-core);
+  - out-of-context LUTs and timing.
+- **7.16d, the bitstream** `snes-dsp1` (the Arty's top, with the hooks):
+  - its own layer 4 chain with our own test program;
+  - `make bit` meets timing.
+- **7.16e, the PS side:**
+  - the bitstream chosen by the cartridge's type byte;
+  - the firmware from the card into the chip's ROMs (written by the
+    PS before the hold falls);
+  - the save states' Spec.
+  - Choosing a bitstream per cartridge is new for the generic PS app:
+    a request to side K.
+- **7.16f, the board check** (the user): Super Mario Kart and Pilotwings
+  on the Arty.
+
+**As built (7.16a, 2026-11-03):** `Snes.Spec.Upd77c25`, pure (the
+registers in a record, RAM a vector), with `firmwareOf` for the three
+dump formats.
+- **The gate:** snes-spec, "the DSP-1's chip": 23 cases of our own
+  programs, and the user's dump's commands through DR and SR. All 26
+  pass.
+  - 2Fh gives 0101h (DSP-1B), and 00h multiplies.
+  - 1Fh sends back the data ROM word for word.
+- **Found on the way:**
+  - 2Fh and 1Fh take one input word before they answer: fullsnes's
+    list doesn't say so.
+  - The DSP-1 reads its command with SRC DR, which sets RQM before it
+    has switched DR to 16-bit words. Games rely on the 65C816's pace:
+    the test's SNES side runs the chip 12 instructions after each
+    access, about one cartridge access's 8 master clocks.
+- **The firmware cases need the dump on the machine:** the user copies
+  it to the worker's `local/firmware` (wrun doesn't sync `local/`). The
+  cases are skipped without it.
+
+**As built (7.16b, the spec's part, and 7.16c, 2026-11-03):**
+- **The cartridge in the spec:**
+  - `Snes.Spec.Map.dspWindow` gives fullsnes's DR and SR windows (by
+    map mode and SRAM). It's a function of its own, so side Q's fast
+    machine, which uses `decode`, is unchanged.
+  - `attachDsp` gives the machine the chip. It is caught up at each
+    access to 1672 / 4725 instructions a master clock (7.6 MHz against
+    236.25 / 11 MHz).
+  - `snes-run --dsp1 FILE` runs a DSP game. snes-spec: 178 of 178.
+- **The circuit** (`Snes.Upd77c25`): a pure function a clock. The
+  memories are outside, read at the state's addresses. An instruction
+  runs once their bytes are in: two clocks at least, against one every
+  2.83 master clocks.
+  - **Its lockstep test** checks every register and RAM after each
+    instruction against the spec: 32 random programs (16 straight, 16
+    with jumps) from random starts, and the user's firmware. Five
+    mutants (S1, KLM, DPH, the stack's bottom, SBB) each fail it.
+  - **Out of context** (`Snes.Upd77c25Ooc`, the Arty's part at
+    25.175 MHz): **639 LUTs**, 270 registers, 2.5 block RAMs, 1 DSP,
+    WNS +25.758 ns. That is far under the plan's 2,000 to 4,000.
+
+**As built (7.16d, the chip in the core; 2026-11-03), the `SNES_DSP1`
+build** (`SNES_CHIP=dsp1`, cabal `-f dsp1`):
+- **The parts:**
+  - `Snes.Dsp1` (the chip's clock, the firmware's load, the 5A22's
+    accesses), its state in the core's record (so in the direct save
+    states' chain).
+  - `SrcDsp` in `Snes.Bus`: an access waits until the chip has caught
+    up.
+  - The firmware read through the ROM port from offset 700000h, which
+    `Snes.Machine` maps to the companion's DDR address 0x02700000.
+- **Our own test cartridge** (`dsp1.s`, type 03h) and firmware
+  (`snes-dspfw`, `Snes.Spec.Upd77c25Asm`): 64 rounds of X + Y, X × Y × 2,
+  X XOR Y, then a timing probe that reads SR 200 times while the chip
+  counts into it.
+  - On the spec: RESULT 01h, and the products as Haskell computes them.
+  - snes-core (`-f dsp1`): the circuit against the spec for 8 frames,
+    every bus event alike. The chip's clock off by 1 in 1,672 fails it.
+- **Found:** the access's wait for the chip never triggers as built.
+  Instructions fall due at least two clocks apart, and the chip runs one
+  in two, with an access after any instruction of its clock. Without the
+  wait the lockstep still passes. It is kept as a guard (it costs
+  nothing when idle).
+- **Layer 4** (`make ci-arty-snes-dsp1`, 2026-11-04): our cartridge with
+  our firmware, the backdrop green as on the spec (golden/vga/dsp1.png).
+  - The harness's DDR takes one `--ddr-file`, so the ROM and the
+    firmware go in as one image: `ddr-dsp1.bin`, made by
+    `systems/snes/arty-z7-20.mk`; `SNES_DSP_FW` picks the firmware.
+  - The 5A22 is held until the firmware is in. Otherwise its own ROM
+    reads would share the ROM port with the load.
+  - **Found, three bugs that only the Verilog had** (Clash's Haskell
+    simulation was right each time):
+    - `dsLoad d == LDone`, a derived Eq on a sum type, compared LDone's
+      unused payload bits too. Those bits are undefined in the HDL, so
+      the load never ended. The fix: a case on the tag.
+    - The block RAMs answer undefined before their first read in
+      Haskell's simulation. `SNES_SIM_STRICT`'s guards (`simOp24`,
+      `simWord`, `Snes.Upd77c25Ooc`'s `simDef`) make them 0, as
+      Verilator has them.
+    - **A Clash 1.8.5 bug:** disjoint expression consolidation shared
+      `snesAcc`'s `clrB bRqm sr` (the DRC branch) with the
+      `clrB bDrs sr` inside the high byte's `clrB bRqm (clrB bDrs sr)`.
+      It chose the bit by DRS, so the high byte's access cleared RQM
+      twice and DRS never. Every 16-bit transfer after the first was
+      then a byte off. The fix: SR's bits by constant masks.
+  - **The bitstream** (`make bit SYSTEM=snes SNES_CHIP=dsp1
+    BUILD=build/arty-z7-20/snes-dsp1`, 2026-11-06): **45,699 LUTs
+    (85.9 %)**, 88 block RAM tiles, 17 DSPs, WNS +0.089 ns. That is
+    8,443 LUTs above the direct build's 37,256, against the chip's 639
+    out of context and the plan's 2,000 to 4,000.
+  - **Measured with the hierarchy kept** (`make snes-ooc
+    SNES_OOC=Snes.MachineOoc SNES_OOC_TOP=snes_machine_ooc
+    SNES_OOC_MODE=hier`, with and without `SNES_OOC_EXTRA=-DSNES_DSP1`;
+    the chip's step is a row of its own, `dspUnit`; 2026-11-06):
+
+    | Row | Base | DSP-1 |
+    |---|---|---|
+    | the whole machine | 42,684 | 42,110 |
+    | sound module (`apuUnit`) | 19,841 | 19,943 |
+    | PPU (`ppuUnit`) | 11,443 | 9,839 |
+    | 5A22 (`busUnit`) | 9,002 | 8,653 |
+    | the DSP-1 (`dspUnit`) | — | 1,110 |
+    | the rest (memories, hooks, platform) | 2,395 | 2,567 |
+    | block RAM tiles, DSPs | 85.5, 15 | 88, 17 |
+
+    So the chip costs about 1,100 to 1,300 LUTs, 2.5 block RAMs and 2
+    DSPs, within the plan. The flat build's +8,443 is Vivado's
+    optimisation of the whole moving, not the chip's logic: rows whose
+    code didn't change move by up to 1,600 here, and 7.15c saw a 3,600
+    swing from an unrelated change. The flat number is what the
+    bitstream must fit, so the later chips' budgets should keep
+    about 8,000 LUTs of margin.
+  - **How the last one was found:** a Verilator harness of
+    `Snes.Upd77c25Ooc` (throwaway) and the same inputs in Clash's
+    simulation. The test `Snes.Upd77c25Ooc in Clash` keeps that round
+    (snes-spec). A per-clock diff of PC, SR, DR and A, through a debug
+    port added for the run, showed the first state that differed.
 
 ## The ladder after the base console (outline; each rung its own plan)
 

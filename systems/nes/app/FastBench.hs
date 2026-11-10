@@ -1,12 +1,14 @@
 -- | Side track Q (PLAN.md Q.7): where the NES reference model's time goes,
 -- to choose what a fast version speeds up (+RTS -s for the allocation):
 --
--- > nes-fast-bench spec|trace|ppu|apu|fast|fast-skip|fast-ppu ROM FRAMES
+-- > nes-fast-bench spec|trace|ppu|apu|fast|fast-skip|fast-ppu|perf ROM FRAMES
 --
 -- * spec: the machine for FRAMES frames (no sound out);
 -- * fast, fast-ppu: the fast version's ("Nes.SpecFast"), the machine with
 --   its sound kept and its PPU alone, as spec and ppu (fast-skip: every
 --   frame's picture skipped, the cost of a skipped frame);
+-- * perf: the performance version's ("Nes.SpecPerf", the browser's), a
+--   frame at a time by its 'P.runFrame', its sound kept;
 -- * trace: the same with the bus and APU traces on, as the desktop runs it
 --   for its sound (every instruction in 'withTrace', the APU's outputs read);
 -- * ppu: 60 frames of the machine, then its PPU alone for FRAMES frames'
@@ -27,6 +29,7 @@ import Nes.Spec.Machine
 import Nes.Spec.Ppu (ppuDot, ppuFramesDone)
 import qualified Nes.SpecFast.Machine as F
 import qualified Nes.SpecFast.Ppu as FP
+import qualified Nes.SpecPerf.Machine as P
 
 -- | Dots and CPU cycles a frame (NTSC).
 dotsPerFrame, cyclesPerFrame :: Int
@@ -38,7 +41,19 @@ main = do
   [which, romF, n] <- getArgs
   file <- B.readFile romF
   let frames = read n :: Int
-  r <- stToIO $ if which `elem` ["fast", "fast-skip", "fast-ppu"] then do
+  r <- stToIO $ if which == "perf" then do
+    em <- P.newMachine file
+    case em of
+      Left e -> pure e
+      Right m -> do
+        P.setSound m True
+        replicateM_ frames $ do
+          P.runFrame m (2 * cyclesPerFrame)
+          s <- P.takeSound m
+          when (U.length s < 0) (pure ())
+        c <- P.machineCycles m
+        pure (which <> ": " <> show c <> " CPU cycles")
+   else if which `elem` ["fast", "fast-skip", "fast-ppu"] then do
     em <- F.newMachine file
     case em of
       Left e -> pure e

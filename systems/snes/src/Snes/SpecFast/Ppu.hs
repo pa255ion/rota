@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -fworker-wrapper -fspecialise-aggressively #-}
+{-# LANGUAGE MultiWayIf #-}
 -- (the fast version is never synthesised: GHC's unboxing back on, which
 -- clash-common's -fno-worker-wrapper turns off for Clash's sake)
 -- Side track Q (PLAN.md Q.5): the desktop emulator's fast version of
@@ -59,9 +60,13 @@ module Snes.SpecFast.Ppu
   , ppuClearFlags
   , ppuObjLine
   , ppuRegW
+  , ppuRegR
   , ppuVramW
   , ppuCgW
   , ppuSetObjLine
+  , Slot (..)
+  , fetchTable
+  , fetchSlotOf
   , frameWidth
   , frameHeight
   ) where
@@ -87,7 +92,8 @@ data Ppu s = Ppu
   , pCol    :: !(MV.MVector s Int)   -- ^ the fetched columns: 'colIx'
   , pFine   :: !(MV.MVector s Int)   -- ^ each layer's fine scroll for the line
   , pSt     :: !(MV.MVector s Int)
-  , pLay    :: !(MV.MVector s Int)   -- ^ side track Q: the BG layers at the pixel ('layers'): 4 x (index, palette, priority, colour), the count at 16
+  , pLay    :: !(MV.MVector s Int)   -- ^ side track Q: the BG layers at the pixel ('layers'): 4 x (index, palette, priority, colour code: 'colourOf'), the count at 16
+  , pSpr    :: !(MV.MVector s Int)   -- ^ side track W: 'ppuSprites'' scratch, the line's first 32 sprites found (OAM index, x, y, w, h); not state
   }
 
 -- A column's slots: 0 the map entry, 1 and 2 the left and right char
@@ -115,7 +121,8 @@ newPpu vram cg oam regs = do
   fine <- MV.replicate 4 0
   st <- MV.replicate 4 0
   lay <- MV.replicate 17 0
-  pure (Ppu vram cg oam regs fr obj col fine st lay)
+  spr <- MV.replicate (32 * 5) 0
+  pure (Ppu vram cg oam regs fr obj col fine st lay spr)
 
 reg :: Ppu s -> Int -> ST s Int
 reg p = MV.unsafeRead (pRegs p)
@@ -137,6 +144,10 @@ ppuSetObjLine p = U.imapM_ (MV.write (pObj p))
 
 -- | Writes into the PPU's own registers, VRAM and CGRAM (the render
 -- thread's copy; the machine writes the vectors it shares).
+-- | A register as the PPU holds it (side track W: the replayer's view).
+ppuRegR :: Ppu s -> Int -> ST s Int
+ppuRegR = reg
+
 ppuRegW :: Ppu s -> Int -> Int -> ST s ()
 ppuRegW p = MV.write (pRegs p)
 
@@ -153,13 +164,13 @@ vramWord p a = do
   let b = (a .&. 0x7FFF) * 2
   lo <- MV.unsafeRead (pVram p) b
   hi <- MV.unsafeRead (pVram p) (b + 1)
-  pure (fromIntegral lo .|. fromIntegral hi `shiftL` 8)
+  pure $! fromIntegral lo .|. fromIntegral hi `shiftL` 8
 
 cgColor :: Ppu s -> Int -> ST s Int
 cgColor p i = do
   lo <- MV.unsafeRead (pCgram p) (i * 2)
   hi <- MV.unsafeRead (pCgram p) (i * 2 + 1)
-  pure ((fromIntegral lo .|. fromIntegral hi `shiftL` 8) .&. 0x7FFF)
+  pure $! (fromIntegral lo .|. fromIntegral hi `shiftL` 8) .&. 0x7FFF
 
 -- * Sprites
 
@@ -191,52 +202,87 @@ ppuSprites p row oamRel = do
   MV.set (pObj p) 0
   obsel <- reg p 0x01
   rot <- reg p 0x03
-  let (small, large) = objSizes (obsel `shiftR` 5)
+  let ((sw, sh), (lw, lh)) = objSizes (obsel `shiftR` 5)
       first = if testBit rot 7 then (oamRel `shiftR` 2) .&. 0x7F else 0
-  entries <- mapM (\k -> do
-    let i = (first + k) .&. 0x7F
-    x0 <- fromIntegral <$> MV.read (pOam p) (i * 4)
-    y <- fromIntegral <$> MV.read (pOam p) (i * 4 + 1)
-    hi <- fromIntegral <$> MV.read (pOam p) (0x200 + i `shiftR` 2)
-    let bits = (hi :: Int) `shiftR` ((i .&. 3) * 2)
-        x9 = x0 .|. ((bits .&. 1) `shiftL` 8)
-        x = if x9 >= 256 then x9 - 512 else x9
-        (w, h) = if testBit bits 1 then large else small
-    pure (i, x, y :: Int, w, h)) [0 .. 127]
-  let onLine (_, x, y, w, h) = (row - y) .&. 0xFF < h && (x > negate w || x == -256) && x < 256
-      found = filter onLine entries
-      inRange = take 32 found
-  when (length found > 32) $ MV.modify (pSt p) (.|. 0x40) stFlags
-  -- the tiles, from the last sprite found to the first; 34 at most
-  let slivers = concat
-        [ [ (e, c) | c <- [0 .. w `div` 8 - 1], let sx = x + c * 8, sx > -8, sx < 256 ]
-        | e@(_, x, _, w, _) <- reverse inRange ]
-  when (length slivers > 34) $ MV.modify (pSt p) (.|. 0x80) stFlags
+      spr = pSpr p
+      -- (side track W: strict loops over a scratch array, not lists of
+      -- the 128 entries and their slivers built on every line, which the
+      -- browser paid for in garbage; the same order and limits)
+      -- the entries on the line, in OAM order from the first: the first 32
+      -- kept, all counted
+      scan !k !nf
+        | k >= 128 = pure nf
+        | otherwise = do
+            let i = (first + k) .&. 0x7F
+            x0 <- fromIntegral <$> MV.read (pOam p) (i * 4)
+            y <- fromIntegral <$> MV.read (pOam p) (i * 4 + 1)
+            hi <- fromIntegral <$> MV.read (pOam p) (0x200 + i `shiftR` 2)
+            let bits = (hi :: Int) `shiftR` ((i .&. 3) * 2)
+                x9 = x0 .|. ((bits .&. 1) `shiftL` 8)
+                x = if x9 >= 256 then x9 - 512 else x9
+                big = testBit bits 1
+                w = if big then lw else sw
+                h = if big then lh else sh
+            if (row - y) .&. 0xFF < h && (x > negate w || x == -256) && x < 256
+              then do
+                when (nf < 32) $ do
+                  MV.unsafeWrite spr (nf * 5) i
+                  MV.unsafeWrite spr (nf * 5 + 1) x
+                  MV.unsafeWrite spr (nf * 5 + 2) y
+                  MV.unsafeWrite spr (nf * 5 + 3) w
+                  MV.unsafeWrite spr (nf * 5 + 4) h
+                scan (k + 1) (nf + 1)
+              else scan (k + 1) nf
+  nf <- scan (0 :: Int) (0 :: Int)
+  when (nf > 32) $ MV.modify (pSt p) (.|. 0x40) stFlags
   let base = (obsel .&. 7) `shiftL` 13
       gap = (((obsel `shiftR` 3) .&. 3) + 1) `shiftL` 12
-  forM_ (take 34 slivers) $ \((i, x, y, w, h), c) -> do
-    tileNo <- fromIntegral <$> MV.read (pOam p) (i * 4 + 2)
-    attr <- fromIntegral <$> MV.read (pOam p) (i * 4 + 3)
-    let n = tileNo .|. ((attr .&. 1) `shiftL` 8) :: Int
-        vflip = testBit attr 7
-        hflip = testBit attr 6
-        pri = (attr `shiftR` 4) .&. 3
-        pal = (attr `shiftR` 1) .&. 7
-        yr0 = (row - y) .&. 0xFF
-        yr = if vflip then h - 1 - yr0 else yr0
-        col = if hflip then w `div` 8 - 1 - c else c
-        tx = ((n .&. 0xF) + col) .&. 0xF
-        ty = (((n `shiftR` 4) .&. 0xF) + yr `shiftR` 3) .&. 0xF
-        addr = base + (if testBit n 8 then gap else 0) + (ty * 16 + tx) * 16 + (yr .&. 7)
-    w01 <- vramWord p addr
-    w23 <- vramWord p (addr + 8)
-    forM_ [0 .. 7] $ \k -> do
-      let sx = x + c * 8 + k
-          b = if hflip then k else 7 - k
-          idx = ((w01 `shiftR` b) .&. 1) .|. (((w01 `shiftR` (b + 8)) .&. 1) `shiftL` 1)
-                .|. (((w23 `shiftR` b) .&. 1) `shiftL` 2) .|. (((w23 `shiftR` (b + 8)) .&. 1) `shiftL` 3)
-      when (sx >= 0 && sx < 256 && idx /= 0) $
-        MV.write (pObj p) sx (idx .|. (pal `shiftL` 4) .|. (pri `shiftL` 7))
+      -- the tiles (8-pixel slivers on the screen), from the last sprite
+      -- kept to the first, left to right; the first 34 drawn, all counted
+      walk !e !c !cnt
+        | e < 0 = pure cnt
+        | otherwise = do
+            i <- MV.unsafeRead spr (e * 5)
+            x <- MV.unsafeRead spr (e * 5 + 1)
+            y <- MV.unsafeRead spr (e * 5 + 2)
+            w <- MV.unsafeRead spr (e * 5 + 3)
+            h <- MV.unsafeRead spr (e * 5 + 4)
+            if c >= w `div` 8 then walk (e - 1) 0 cnt else do
+              let sx0 = x + c * 8
+              if sx0 > -8 && sx0 < 256
+                then do
+                  when (cnt < 34) (sliver i x y w h c)
+                  walk e (c + 1) (cnt + 1)
+                else walk e (c + 1) cnt
+      sliver i x y w h c = do
+        tileNo <- fromIntegral <$> MV.read (pOam p) (i * 4 + 2)
+        attr <- fromIntegral <$> MV.read (pOam p) (i * 4 + 3)
+        let n = tileNo .|. ((attr .&. 1) `shiftL` 8) :: Int
+            vflip = testBit attr 7
+            hflip = testBit attr 6
+            pri = (attr `shiftR` 4) .&. 3
+            pal = (attr `shiftR` 1) .&. 7
+            yr0 = (row - y) .&. 0xFF
+            yr = if vflip then h - 1 - yr0 else yr0
+            col = if hflip then w `div` 8 - 1 - c else c
+            tx = ((n .&. 0xF) + col) .&. 0xF
+            ty = (((n `shiftR` 4) .&. 0xF) + yr `shiftR` 3) .&. 0xF
+            addr = base + (if testBit n 8 then gap else 0) + (ty * 16 + tx) * 16 + (yr .&. 7)
+        w01 <- vramWord p addr
+        w23 <- vramWord p (addr + 8)
+        let px !k
+              | k > 7 = pure ()
+              | otherwise = do
+                  let sx = x + c * 8 + k
+                      b = if hflip then k else 7 - k
+                      idx = ((w01 `shiftR` b) .&. 1) .|. (((w01 `shiftR` (b + 8)) .&. 1) `shiftL` 1)
+                            .|. (((w23 `shiftR` b) .&. 1) `shiftL` 2) .|. (((w23 `shiftR` (b + 8)) .&. 1) `shiftL` 3)
+                  when (sx >= 0 && sx < 256 && idx /= 0) $
+                    MV.write (pObj p) sx (idx .|. (pal `shiftL` 4) .|. (pri `shiftL` 7))
+                  px (k + 1)
+        px (0 :: Int)
+  cnt <- walk (min 32 nf - 1) (0 :: Int) (0 :: Int)
+  when (cnt > 34) $ MV.modify (pSt p) (.|. 0x80) stFlags
 
 -- * Background layers
 
@@ -246,7 +292,7 @@ data Px = Px !Int !Int !Int
 -- | What a fetch slot does: an offset-per-tile entry (H or V), a layer's
 -- map entry, or a layer's k-th char word.
 data Slot = SOptH | SOptV | SMap !Int | SChar !Int !Int | SNone
-  deriving stock (Eq)
+  deriving stock (Eq, Show)
 
 -- | The eight fetch slots of a column's 8 dots, by BG mode (the
 -- bandwidth the chip has: one VRAM word a dot). Modes 5 and 6 fetch both
@@ -262,6 +308,78 @@ fetchTable mode = case mode of
   5 -> [SMap 0, SMap 1, SChar 0 0, SChar 0 1, SChar 0 2, SChar 0 3, SChar 1 0, SChar 1 1]
   6 -> [SOptH, SOptV, SMap 0, SChar 0 0, SChar 0 1, SChar 0 2, SChar 0 3, SNone]
   _ -> replicate 8 SNone
+
+-- | 'fetchTable''s slot @s@ of mode @mode@ as nested cases (side track W:
+-- not a boxed table of 'Slot's, a top-level value entered on every fetch
+-- dot; inlined, each case's constructor is known where it is matched).
+-- The same table: snes-specfast's test checks them equal.
+fetchSlotOf :: Int -> Int -> Slot
+fetchSlotOf mode s = case mode of
+  0 -> case s of
+    0 -> SMap 0
+    1 -> SMap 1
+    2 -> SMap 2
+    3 -> SMap 3
+    4 -> SChar 0 0
+    5 -> SChar 1 0
+    6 -> SChar 2 0
+    _ -> SChar 3 0
+  1 -> case s of
+    0 -> SMap 0
+    1 -> SMap 1
+    2 -> SMap 2
+    3 -> SChar 0 0
+    4 -> SChar 0 1
+    5 -> SChar 1 0
+    6 -> SChar 1 1
+    _ -> SChar 2 0
+  2 -> case s of
+    0 -> SOptH
+    1 -> SOptV
+    2 -> SMap 0
+    3 -> SMap 1
+    4 -> SChar 0 0
+    5 -> SChar 0 1
+    6 -> SChar 1 0
+    _ -> SChar 1 1
+  3 -> case s of
+    0 -> SMap 0
+    1 -> SMap 1
+    2 -> SChar 0 0
+    3 -> SChar 0 1
+    4 -> SChar 0 2
+    5 -> SChar 0 3
+    6 -> SChar 1 0
+    _ -> SChar 1 1
+  4 -> case s of
+    0 -> SOptH
+    1 -> SMap 0
+    2 -> SMap 1
+    3 -> SChar 0 0
+    4 -> SChar 0 1
+    5 -> SChar 0 2
+    6 -> SChar 0 3
+    _ -> SChar 1 0
+  5 -> case s of
+    0 -> SMap 0
+    1 -> SMap 1
+    2 -> SChar 0 0
+    3 -> SChar 0 1
+    4 -> SChar 0 2
+    5 -> SChar 0 3
+    6 -> SChar 1 0
+    _ -> SChar 1 1
+  6 -> case s of
+    0 -> SOptH
+    1 -> SOptV
+    2 -> SMap 0
+    3 -> SChar 0 0
+    4 -> SChar 0 1
+    5 -> SChar 0 2
+    6 -> SChar 0 3
+    _ -> SNone
+  _ -> SNone
+{-# INLINE fetchSlotOf #-}
 
 -- | 'fetchTable' as one table, mode * 8 + slot (side track Q: not `!!` on
 -- a list every fetch dot).
@@ -294,6 +412,7 @@ colIx :: Int -> Int -> Int -> Int
 colIx n j k = (n * 8 + (j .&. 7)) * colSize + k
 
 -- | A BG map's entry address for tile (tx, ty) under its SC register.
+{-# INLINE mapAddr #-}
 mapAddr :: Int -> Int -> Int -> Int
 mapAddr sc tx0 ty0 =
   let wide = testBit sc 0
@@ -306,29 +425,30 @@ mapAddr sc tx0 ty0 =
 
 -- | Fetch slot @s@ of column @j@ on line V, from the registers as they
 -- are now (dot 6 + 8j + s of the line).
-fetchSlot :: Ppu s -> Int -> Int -> Int -> Int -> ST s ()
-fetchSlot p v field j s = do
-  bgmode <- reg p 0x05
-  let mode = bgmode .&. 7
+fetchSlot :: Ppu s -> Ctx -> Int -> Int -> Int -> Int -> ST s ()
+fetchSlot p c v field j s = do
+  -- (side track W: BGMODE, MOSAIC and SETINI from the stretch's 'Ctx')
+  let bgmode = cBgmode c
+      mode = cMode c
       hiresMode = mode == 5 || mode == 6
-  case V.unsafeIndex fetchSlots (mode * 8 + s) of
+  case fetchSlotOf mode s of
     SNone -> pure ()
     SOptH -> optEntry 0
     SOptV -> optEntry 1
     SMap n -> do
-      mosaic <- reg p 0x06
-      setini <- reg p 0x33
+      let mosaic = cMosaic c
+          setini = cSetini c
       sc <- reg p (0x07 + n)
       hofs <- reg p (0x0D + 2 * n)
       vofs <- reg p (0x0E + 2 * n)
-      eh <- MV.read (pCol p) (colIx 4 j 0)
-      ev <- MV.read (pCol p) (colIx 4 j 1)
+      eh <- MV.unsafeRead (pCol p) (colIx 4 j 0)
+      ev <- MV.unsafeRead (pCol p) (colIx 4 j 1)
       when (j == 0) $ MV.write (pFine p) n (hofs .&. 7)
       let row = v - 1
           msize = (mosaic `shiftR` 4) + 1
           srow0 = if testBit mosaic n then row - row `mod` msize else row
           srow = if testBit setini 0 && hiresMode then srow0 * 2 + field else srow0
-          opt = mode `elem` [2, 4, 6] && n < 2 && j >= 1
+          opt = (mode == 2 || mode == 4 || mode == 6) && n < 2 && j >= 1
           apply e = testBit e (13 + n)
           !(!coarse, !vofs')
             | opt && mode == 4 && apply eh = if testBit eh 15 then (hofs `shiftR` 3, eh .&. 0x3FF) else ((eh .&. 0x3F8) `shiftR` 3, vofs)
@@ -341,9 +461,10 @@ fetchSlot p v field j s = do
           tcol = coarse + j
           tx = if tw == 16 && not hiresMode then tcol `shiftR` 1 else tcol
           y = srow + vofs'
-      e <- vramWord p (mapAddr sc tx (y `div` th))
+      -- (th is 8 or 16: the shift and mask are div and mod)
+      e <- vramWord p (mapAddr sc tx (y `shiftR` (if th == 16 then 4 else 3)))
       let hflip = testBit e 14
-          py0 = y `mod` th
+          py0 = y .&. (th - 1)
           py = if testBit e 15 then th - 1 - py0 else py0
           ch0 = (e .&. 0x3FF) + (if py >= 8 then 16 else 0)
           (chL, chR)
@@ -356,9 +477,9 @@ fetchSlot p v field j s = do
       MV.write (pCol p) (colIx n j 7) (py .&. 7)
     SChar n k -> do
       nba <- reg p (if n < 2 then 0x0B else 0x0C)
-      chL <- MV.read (pCol p) (colIx n j 1)
-      chR <- MV.read (pCol p) (colIx n j 2)
-      r <- MV.read (pCol p) (colIx n j 7)
+      chL <- MV.unsafeRead (pCol p) (colIx n j 1)
+      chR <- MV.unsafeRead (pCol p) (colIx n j 2)
+      r <- MV.unsafeRead (pCol p) (colIx n j 7)
       let bpp = bppOf mode n
           half = bpp `div` 2
           (ch, plane) = if hiresMode then (if k < half then (chL, k) else (chR, k - half)) else (chL, k)
@@ -377,9 +498,10 @@ fetchSlot p v field j s = do
 
 -- | Layer n's pixel at screen x (after mosaic) from its fetched columns;
 -- in hi-res, @half@ is the half-dot.
+{-# INLINE bgPixel #-}
 bgPixel :: Ppu s -> Int -> Int -> Int -> Int -> ST s Px
 bgPixel p mode n x half = do
-  fine <- MV.read (pFine p) n
+  fine <- MV.unsafeRead (pFine p) n
   let q = x + fine
       j = q `shiftR` 3
       px0 = q .&. 7
@@ -393,12 +515,12 @@ bgPixel p mode n x half = do
                  sub = hp `shiftR` 3
              in (3 + sub * planes, hp .&. 7)
         else (3, px0)
-  e <- MV.read (pCol p) (colIx n j 0)
+  e <- MV.unsafeRead (pCol p) (colIx n j 0)
   let b = if testBit e 14 then px else 7 - px
       go !k !acc
         | k >= planes = pure acc
         | otherwise = do
-            w <- MV.read (pCol p) (colIx n j (base + k))
+            w <- MV.unsafeRead (pCol p) (colIx n j (base + k))
             go (k + 1) (acc .|. (((w `shiftR` b) .&. 1) `shiftL` (2 * k))
                             .|. (((w `shiftR` (b + 8)) .&. 1) `shiftL` (2 * k + 1)))
   idx <- go (0 :: Int) (0 :: Int)
@@ -450,49 +572,203 @@ ppuRenderTo :: Ppu s -> Int -> Int -> Int -> ST s ()
 ppuRenderTo p v field upTo = do
   d0 <- MV.read (pSt p) stX
   when (d0 < upTo && d0 < 278) $ do
-    forM_ [d0 .. min 277 (upTo - 1)] $ \d -> do
-      when (d >= 6 && d < 270) $ fetchSlot p v field ((d - 6) `shiftR` 3) ((d - 6) .&. 7)
-      when (d >= 22) $ pixel p v field (d - 22)
+    -- (side track W: the registers and CGRAM's backdrop read once for the
+    -- stretch, which no write interrupts: 'Ctx')
+    c <- mkCtx p
+    let end = min 277 (upTo - 1)
+        go !d
+          | d > end = pure ()
+          | otherwise = do
+              when (d >= 6 && d < 270) $ fetchSlot p c v field ((d - 6) `shiftR` 3) ((d - 6) .&. 7)
+              when (d >= 22) $ pixel p c v field (d - 22)
+              go (d + 1)
+    go d0
     MV.write (pSt p) stX (min 278 upTo)
 
-pixel :: Ppu s -> Int -> Int -> Int -> ST s ()
-pixel p v field x = do
-  let row = v - 1
+-- | What the pixels of a stretch read of the registers (and CGRAM's
+-- colour 0), once for the stretch: within one 'ppuRenderTo' nothing is
+-- written (the machine draws before each write; the render threads
+-- between their log's changes). Side track W: they were read again for
+-- every pixel, the windows' alone 36 times.
+data Ctx = Ctx
+  { cInidisp, cSetini, cBgmode, cMode, cTm, cTs, cTmw, cTsw, cCgwsel, cAdsub, cFixed, cMosaic
+  , cWsel, cWlog, cL1, cR1, cL2, cR2, cBack :: !Int
+  , cOrder :: !(U.Vector Int)
+  , cRankBg :: !Int   -- ^ 'ranks': BG layer n at priority hi's place in the order, 4 bits at (n * 2 + hi) * 4 (15: not in it)
+  , cRankObj :: !Int  -- ^ the sprites at priority k's, 4 bits at k * 4
+  , cMasks :: !Int    -- ^ 'windowMask' for the four cases (inside window 1, inside window 2): 6 bits each at (in1 + 2 in2) * 8
+  }
+
+mkCtx :: Ppu s -> ST s Ctx
+mkCtx p = do
   inidisp <- reg p 0x00
   setini <- reg p 0x33
   bgmode <- reg p 0x05
+  tm <- reg p 0x2C
+  ts <- reg p 0x2D
+  tmw <- reg p 0x2E
+  tsw <- reg p 0x2F
+  cgwsel <- reg p 0x30
+  adsub <- reg p 0x31
+  fixed <- reg p 0x42
+  mosaic <- reg p 0x06
+  w12 <- reg p 0x23
+  w34 <- reg p 0x24
+  wobj <- reg p 0x25
+  lbg <- reg p 0x2A
+  lobj <- reg p 0x2B
+  l1 <- reg p 0x26
+  r1 <- reg p 0x27
+  l2 <- reg p 0x28
+  r2 <- reg p 0x29
+  back <- cgColor p 0
   let mode = bgmode .&. 7
+      order = orderTable mode (testBit bgmode 3) (testBit setini 6)
+      (rbg, robj) = ranks order
+  let c0 = Ctx inidisp setini bgmode mode tm ts tmw tsw cgwsel adsub fixed mosaic
+        (w12 .|. (w34 `shiftL` 8) .|. (wobj `shiftL` 16)) (lbg .|. (lobj `shiftL` 8)) l1 r1 l2 r2 back
+        order rbg robj 0
+      -- (the windows' masks: a pixel's depends only on whether it is
+      -- inside each window, so the four are worked out once a stretch)
+      masks = foldr (\k acc -> acc .|. (masksFor c0 (odd k) (k >= 2) `shiftL` (k * 8))) 0 [0 .. 3 :: Int]
+  pure $! c0 { cMasks = masks }
+
+-- | Each entry's place in a priority order ('orderTable'), front first, as
+-- 'Ctx''s two packed fields: the front-most pixel is the lowest place
+-- among those present ('pixelFast').
+ranks :: U.Vector Int -> (Int, Int)
+ranks order = U.ifoldl' put (complement 0 .&. 0xFFFFFFFF, 0xFFFF) order
+ where
+  put (bg, obj) k code
+    | code >= 8 = (bg, setPlace obj (code - 8) k)
+    | otherwise = (setPlace bg code k, obj)
+  setPlace w slot k = (w .&. complement (0xF `shiftL` (slot * 4))) .|. (k `shiftL` (slot * 4))
+
+pixel :: Ppu s -> Ctx -> Int -> Int -> Int -> ST s ()
+pixel p c v field x = do
+  let !row = v - 1
+      inidisp = cInidisp c
+      setini = cSetini c
+      mode = cMode c
       hires = mode == 5 || mode == 6
       pseudo = testBit setini 3
-      out k c = MV.write (pFrame p) (row * frameWidth + 2 * x + k) (fromIntegral c)
+      -- (row and x checked: within the frame)
+      out k col = MV.unsafeWrite (pFrame p) (row * frameWidth + 2 * x + k) (fromIntegral col)
   if testBit inidisp 7 || row < 0 || row >= frameHeight
     then when (row >= 0 && row < frameHeight) (out 0 0 >> out 1 0)
     else do
       let bright = inidisp .&. 0xF
-          scale c = if bright == 0 then 0 else
+          scale c | bright == 15 = c   -- (full brightness: (c * 16) / 16)
+                  | bright == 0 = 0
+                  | otherwise =
             let f k = (((c `shiftR` k) .&. 31) * (bright + 1)) `div` 16 in f 0 .|. (f 5 `shiftL` 5) .|. (f 10 `shiftL` 10)
       -- (the fast version: the windows once per pixel, as a bit mask; they
       -- don't depend on the screen)
-      wins <- windowMask p x
+      let !wins = windowMask c x
       if hires || pseudo
         then do
           -- the sub screen's half-dot on the left, the main screen's on the right
-          subPx <- screen p v field x False 0 wins False
-          mainPx <- screen p v field x True 1 wins False
-          back <- cgColor p 0
-          let col sh = if shLayer sh == 5 then back else shColor sh
-          mathed <- colorMath p wins mainPx Nothing
+          subPx <- screen p c v field x False 0 wins False
+          mainPx <- screen p c v field x True 1 wins False
+          let back = cBack c
+              col sh = if shLayer sh == 5 then back else shColor sh
+              !mathed = colorMath c wins mainPx Nothing
           out 0 (scale (col subPx))
           out 1 (scale mathed)
         else do
-          -- (the fast version: the BG layers once for both screens, which
-          -- see the same ones outside hi-res)
-          layers p v x (-1) mode
-          mainPx <- screen p v field x True (-1) wins True
-          subPx <- screen p v field x False (-1) wins True
-          c <- colorMath p wins mainPx (Just subPx)
-          out 0 (scale c)
-          out 1 (scale c)
+          col <- pixelFast p c v x wins
+          out 0 (scale col)
+          out 1 (scale col)
+
+-- | Outside hi-res: both screens' front-most pixels and their colour maths
+-- at x, as 'layers' and 'screen' twice would find them (side track W):
+-- each BG layer's pixel once, kept in hand, both screens' winners found
+-- in the same pass as the lowest place in the mode's order ('ranks')
+-- among the pixels present and on, not by walking the order for each
+-- screen over a scratch array.
+{-# INLINE pixelFast #-}
+pixelFast :: Ppu s -> Ctx -> Int -> Int -> Int -> ST s Int
+pixelFast p c v x wins = do
+  let mode = cMode c
+      mosaic = cMosaic c
+      msize = (mosaic `shiftR` 4) + 1
+      row = v - 1
+      direct = testBit (cCgwsel c) 0
+      onOf tm tw l = testBit tm l && not (testBit tw l && testBit wins l)
+      onM = onOf (cTm c) (cTmw c)
+      onS = onOf (cTs c) (cTsw c)
+      -- the sub screen without BG/OBJ (CGWSEL bit 1): only its backdrop
+      !subOff = not (testBit (cCgwsel c) 1)
+      rankBg n pri = (cRankBg c `unsafeShiftR` ((n * 2 + pri) * 4)) .&. 0xF
+      nl = case mode of 0 -> 4; 1 -> 3; 6 -> 1; 7 -> 2; _ -> 2 :: Int
+  objW <- MV.unsafeRead (pObj p) x
+  let -- whether layer n's pixel (place r) beats the main or sub screen's so far
+      winsM !n !idx !r !rm = idx /= 0 && onM n && r < rm
+      winsS !n !idx !r !rs = idx /= 0 && not subOff && onS n && r < rs
+      done = pixelDone p c wins objW
+  if mode == 7
+    then do
+      let mx = if testBit mosaic 0 then x - x `mod` msize else x
+          mv = if testBit mosaic 0 then v - (row `mod` msize) else v
+      m7 <- mode7Pixel p mx mv
+      let !code0 = if m7 == 0 then 0 else if direct then colorDirect (directColor m7 0) else m7
+          !r0 = rankBg 0 0
+          !m0 = winsM 0 m7 r0 15
+          !s0 = winsS 0 m7 r0 15
+          !rm0 = if m0 then r0 else 15
+          !rs0 = if s0 then r0 else 15
+          !i1 = m7 .&. 0x7F
+          !r1 = rankBg 1 (m7 `shiftR` 7)
+          !m1 = winsM 1 i1 r1 rm0
+          !s1 = winsS 1 i1 r1 rs0
+      done (if m1 then r1 else rm0) (if m1 then 1 else if m0 then 0 else -1) (if m1 then i1 else code0)
+           (if s1 then r1 else rs0) (if s1 then 1 else if s0 then 0 else -1) (if s1 then i1 else code0)
+    else do
+      let each !n !rm !lm !cm !rs !ls !cs
+            | n >= nl = done rm lm cm rs ls cs
+            | otherwise = do
+                let bpp = bppOf mode n
+                    !sx = if testBit mosaic n then x - x `mod` msize else x
+                Px idx pal pri <- bgPixel p mode n sx (-1)
+                let !code | idx == 0 = 0
+                          | bpp == 8 && direct = colorDirect (directColor idx pal)
+                          | otherwise = case bpp of
+                              2 -> (if mode == 0 then n * 32 else 0) + pal * 4 + idx
+                              4 -> pal * 16 + idx
+                              _ -> idx
+                let !r = rankBg n pri
+                    !m = winsM n idx r rm
+                    !sb = winsS n idx r rs
+                each (n + 1) (if m then r else rm) (if m then n else lm) (if m then code else cm)
+                             (if sb then r else rs) (if sb then n else ls) (if sb then code else cs)
+      each 0 15 (-1) 0 15 (-1) 0
+
+-- | 'pixelFast''s end: the screens' colours from the layers' winners
+-- (place, layer, colour code; layer -1 none), the sprite and the backdrop
+-- considered last, and their colour maths. (Top level: as a local
+-- function, called from the layers' loop and from mode 7's, it was a
+-- closure built on every pixel.)
+{-# INLINE pixelDone #-}
+pixelDone :: Ppu s -> Ctx -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> ST s Int
+pixelDone p c !wins !objW !rm !lm !cm !rs !ls !cs = do
+  let onOf tm tw l = testBit tm l && not (testBit tw l && testBit wins l)
+      !subOff = not (testBit (cCgwsel c) 1)
+      !objPri = objW `unsafeShiftR` 7
+      !ro = if objW == 0 then 15 else (cRankObj c `unsafeShiftR` (objPri * 4)) .&. 0xF
+      !objM = objW /= 0 && onOf (cTm c) (cTmw c) 4 && ro < rm
+      !objS = objW /= 0 && not subOff && onOf (cTs c) (cTsw c) 4 && ro < rs
+      !opal = (objW `unsafeShiftR` 4) .&. 7
+      !omath = opal >= 4
+  !oc <- if objM || objS then cgColor p (128 + opal * 16 + (objW .&. 0xF)) else pure 0
+  !mc <- if objM || lm < 0 then pure 0 else colourOf p cm
+  !sc <- if objS || ls < 0 then pure 0 else colourOf p cs
+  let !mainPx | objM = Shown oc 4 omath
+              | lm < 0 = Shown (cBack c) 5 False
+              | otherwise = Shown mc lm False
+      !subPx | objS = Shown oc 4 omath
+             | ls < 0 = Shown (cFixed c) 5 False
+             | otherwise = Shown sc ls False
+  pure $! colorMath c wins mainPx (Just subPx)
 
 -- | The front-most pixel of the main or sub screen at x; @half@ is the
 -- hi-res half-dot (0 left, 1 right) or -1; @given@: the BG layers are in
@@ -500,36 +776,45 @@ pixel p v field x = do
 -- Q: the layers in a scratch array and the mode's priority order a table
 -- walked to its first hit, not lists of candidates searched with lookup
 -- and find; the same order and rules.)
-screen :: Ppu s -> Int -> Int -> Int -> Bool -> Int -> Int -> Bool -> ST s Shown
-screen p v _field x main half wins given = do
-  bgmode <- reg p 0x05
-  tm <- reg p (if main then 0x2C else 0x2D)
-  tw <- reg p (if main then 0x2E else 0x2F)
-  setini <- reg p 0x33
-  cgwsel <- reg p 0x30
-  let mode = bgmode .&. 7
+{-# INLINE screen #-}
+screen :: Ppu s -> Ctx -> Int -> Int -> Int -> Bool -> Int -> Int -> Bool -> ST s Shown
+screen p c v _field x main half wins given = do
+  let tm = if main then cTm c else cTs c
+      tw = if main then cTmw c else cTsw c
+      cgwsel = cCgwsel c
       on l = testBit tm l && not (testBit tw l && testBit wins l)
       -- as colour maths' operand, the sub screen without BG/OBJ shows only
       -- its backdrop (CGWSEL bit 1); in hi-res (a half-dot given) it is
       -- drawn either way
-      subOff = not main && half < 0 && not (testBit cgwsel 1)
-  objW <- MV.read (pObj p) x
-  let objPri = if objW == 0 then -1 else objW `shiftR` 7
-      objOn = on 4 && objW /= 0 && not subOff
+      !subOff = not main && half < 0 && not (testBit cgwsel 1)
+  objW <- MV.unsafeRead (pObj p) x
+  let !objPri = if objW == 0 then -1 else objW `shiftR` 7
+      !objOn = on 4 && objW /= 0 && not subOff
       lay = pLay p
   nl <- if subOff then pure 0 else do
-    when (not given) (layers p v x half mode)
+    when (not given) (layers p c v x half)
     MV.unsafeRead lay 16
   let -- the priority order of each mode, front first ('orderTable')
-      order = orderTable mode (testBit bgmode 3) (testBit setini 6)
+      order = cOrder c
       len = U.length order
-      -- a code's hit: 0 none, 1 the sprite, 2 a BG layer
+      -- the hit: -1 none (the backdrop), 4 the sprite, else BG layer n and
+      -- its colour (the search tail-calls 'finish': a jump, no closure)
+      finish !layer !col = case layer of
+        4 -> do
+          let idx = objW .&. 0xF
+              pal = (objW `shiftR` 4) .&. 7
+          oc <- cgColor p (128 + pal * 16 + idx)
+          let !om = pal >= 4
+          pure $! Shown oc 4 om
+        -1 -> do
+          pure $! Shown (if main then cBack c else cFixed c) 5 False
+        _ -> pure $! Shown col layer False
       go !k
-        | k >= len = pure (Shown 0 (-1) False)
+        | k >= len = finish (-1) 0
         | otherwise = do
             let code = U.unsafeIndex order k
             if code >= 8
-              then if objOn && objPri == code - 8 then pure (Shown 0 4 False) else go (k + 1)
+              then if objOn && objPri == code - 8 then finish 4 0 else go (k + 1)
               else do
                 let n = code `shiftR` 1
                     hi = code .&. 1
@@ -537,19 +822,9 @@ screen p v _field x main half wins given = do
                   idx <- MV.unsafeRead lay (n * 4)
                   pri <- MV.unsafeRead lay (n * 4 + 2)
                   if idx /= 0 && pri == hi
-                    then (\c -> Shown c n False) <$> MV.unsafeRead lay (n * 4 + 3)
+                    then MV.unsafeRead lay (n * 4 + 3) >>= colourOf p >>= finish n
                     else go (k + 1)
-  hit <- go 0
-  case shLayer hit of
-    4 -> do
-      let idx = objW .&. 0xF
-          pal = (objW `shiftR` 4) .&. 7
-      c <- cgColor p (128 + pal * 16 + idx)
-      pure (Shown c 4 (pal >= 4))
-    -1 -> do
-      c <- if main then cgColor p 0 else reg p 0x42
-      pure (Shown c 5 False)
-    _ -> pure hit
+  go 0
 
 -- | Each mode's priority order, front first: BG layer n at priority hi as
 -- n * 2 + hi, the sprites at priority k as 8 + k.
@@ -574,11 +849,12 @@ orderTable mode m1bg3 m7ext = case mode of
 
 -- | Each BG layer of the mode at x, its pixel and colour, into 'pLay'
 -- (the count at 16).
-layers :: Ppu s -> Int -> Int -> Int -> Int -> ST s ()
-layers p v x half mode = do
-  mosaic <- reg p 0x06
-  cgwsel <- reg p 0x30
-  let row = v - 1
+layers :: Ppu s -> Ctx -> Int -> Int -> Int -> ST s ()
+layers p ctx v x half = do
+  let mosaic = cMosaic ctx
+      cgwsel = cCgwsel ctx
+      mode = cMode ctx
+      row = v - 1
       msize = (mosaic `shiftR` 4) + 1
       nLayers = case mode of 0 -> 4; 1 -> 3; 6 -> 1; _ -> 2 :: Int
       direct = testBit cgwsel 0
@@ -587,10 +863,8 @@ layers p v x half mode = do
       let mx = if testBit mosaic 0 then x - x `mod` msize else x
           mv = if testBit mosaic 0 then v - (row `mod` msize) else v
       c <- mode7Pixel p mx mv
-      col <- if c == 0 then pure 0 else if direct then pure (directColor c 0) else cgColor p c
-      col2 <- if c .&. 0x7F == 0 then pure 0 else cgColor p (c .&. 0x7F)
-      put 0 (Px c 0 0) col
-      put 1 (Px (c .&. 0x7F) 0 (c `shiftR` 7)) col2
+      put 0 (Px c 0 0) (if c == 0 then 0 else if direct then colorDirect (directColor c 0) else c)
+      put 1 (Px (c .&. 0x7F) 0 (c `shiftR` 7)) (c .&. 0x7F)
       MV.unsafeWrite (pLay p) 16 2
     else do
       MV.unsafeWrite (pLay p) 16 nLayers
@@ -602,13 +876,16 @@ layers p v x half mode = do
                     mos = testBit mosaic n
                     sx = if mos then x - x `mod` msize else x
                 px@(Px idx pal _) <- bgPixel p mode n sx half
-                col <- if idx == 0 then pure 0
-                       else if bpp == 8 && direct then pure (directColor idx pal)
-                       else cgColor p (case bpp of
+                -- (side track W: the colour's CGRAM address, or a direct
+                -- colour, kept; the colour looked up only for the pixel a
+                -- screen shows, 'colourOf', not for every layer's)
+                let !code | idx == 0 = 0
+                          | bpp == 8 && direct = colorDirect (directColor idx pal)
+                          | otherwise = case bpp of
                               2 -> (if mode == 0 then n * 32 else 0) + pal * 4 + idx
                               4 -> pal * 16 + idx
-                              _ -> idx)
-                put n px col
+                              _ -> idx
+                put n px code
                 each (n + 1)
       each (0 :: Int)
  where
@@ -617,6 +894,18 @@ layers p v x half mode = do
     MV.unsafeWrite (pLay p) (n * 4 + 1) pal
     MV.unsafeWrite (pLay p) (n * 4 + 2) pri
     MV.unsafeWrite (pLay p) (n * 4 + 3) col
+
+-- | A layer's colour code ('layers'): a CGRAM address (0-255), or a
+-- direct colour with bit 16 set.
+colorDirect :: Int -> Int
+colorDirect c = c .|. 0x10000
+{-# INLINE colorDirect #-}
+
+colourOf :: Ppu s -> Int -> ST s Int
+colourOf p code
+  | code >= 0x10000 = pure $! code .&. 0x7FFF
+  | otherwise = cgColor p code
+{-# INLINE colourOf #-}
 
 -- | Direct colour: BBGGGRRR and the palette's bgr into 15 bits.
 directColor :: Int -> Int -> Int
@@ -627,76 +916,90 @@ directColor c pal =
   in r .|. (g `shiftL` 5) .|. (b `shiftL` 10)
 
 -- | The windows of layers 0 to 5 at x as bits ('windowAt' each).
-windowMask :: Ppu s -> Int -> ST s Int
-windowMask p x = go 0 0
+windowMask :: Ctx -> Int -> Int
+windowMask c x =
+  let !k = (if x >= cL1 c && x <= cR1 c then 1 else 0) .|. (if x >= cL2 c && x <= cR2 c then 2 else 0)
+  in (cMasks c `unsafeShiftR` (k * 8)) .&. 0x3F
+{-# INLINE windowMask #-}
+
+-- | The six layers' window bits for a pixel inside window 1 or not and
+-- inside window 2 or not ('windowAt' each).
+masksFor :: Ctx -> Bool -> Bool -> Int
+masksFor c in1 in2 = go 0 0
  where
   go !l !acc
-    | l > 5 = pure acc
-    | otherwise = do
-        w <- windowAt p l x
-        go (l + 1) (if w then setBit acc l else acc)
+    | l > 5 = acc
+    | otherwise = go (l + 1) (if windowAt c l in1 in2 then setBit acc l else acc)
 
 -- | Whether layer l (0-3 BG1-4, 4 OBJ, 5 the colour maths window) is in
 -- its window at x.
-windowAt :: Ppu s -> Int -> Int -> ST s Bool
-windowAt p l x = do
-  sel <- reg p (0x23 + l `div` 2)
-  logic <- reg p (if l < 4 then 0x2A else 0x2B)
-  l1 <- reg p 0x26
-  r1 <- reg p 0x27
-  l2 <- reg p 0x28
-  r2 <- reg p 0x29
-  let bits = (sel `shiftR` (4 * (l .&. 1))) .&. 0xF
-      in1 = x >= l1 && x <= r1
-      in2 = x >= l2 && x <= r2
+windowAt :: Ctx -> Int -> Bool -> Bool -> Bool
+windowAt c l in1 in2 =
+  let sel = (cWsel c `shiftR` (8 * (l `div` 2))) .&. 0xFF
+      logic = if l < 4 then cWlog c .&. 0xFF else cWlog c `shiftR` 8
+      bits = (sel `shiftR` (4 * (l .&. 1))) .&. 0xF
       -- each window's two bits: enable (the higher), invert (the lower);
       -- fullsnes's "0..1=Disable, 1=Inside, 2=Outside" is a typo for 2 and
       -- 3 (bsnes, anomie); read as bit 0 enable, a game's color window (a
       -- text box's black, step 7.12) was off
-      w1 = if testBit bits 1 then Just (in1 /= testBit bits 0) else Nothing
-      w2 = if testBit bits 3 then Just (in2 /= testBit bits 2) else Nothing
+      -- (side track W: each window's state as a plain value, no Maybe
+      -- built on every pixel)
+      !e1 = testBit bits 1
+      !e2 = testBit bits 3
+      !a = in1 /= testBit bits 0
+      !b = in2 /= testBit bits 2
       lg = (logic `shiftR` (2 * (l .&. 3))) .&. 3
-  pure $ case (w1, w2) of
-    (Just a, Just b) -> case lg of
-      0 -> a || b
-      1 -> a && b
-      2 -> a /= b
-      _ -> a == b
-    (Just a, Nothing) -> a
-    (Nothing, Just b) -> b
-    _ -> False
+  in if
+    | e1 && e2 -> case lg of
+        0 -> a || b
+        1 -> a && b
+        2 -> a /= b
+        _ -> a == b
+    | e1 -> a
+    | e2 -> b
+    | otherwise -> False
 
 -- | Colour maths on the main screen's pixel with the sub screen's (or,
 -- given Nothing, the fixed colour).
-colorMath :: Ppu s -> Int -> Shown -> Maybe Shown -> ST s Int
-colorMath p wins mainPx subPx = do
-  cgwsel <- reg p 0x30
-  adsub <- reg p 0x31
-  fixed <- reg p 0x42
-  let inWin = testBit wins 5
-  -- CGWSEL bits 7-6 force the main screen black and 5-4 allow the maths:
-  -- 0 never / always, 1 and 2 outside or inside the maths window, 3
-  -- always / never
-  let black = case (cgwsel `shiftR` 6) .&. 3 of 0 -> False; 1 -> not inWin; 2 -> inWin; _ -> True
-      allowed = case (cgwsel `shiftR` 4) .&. 3 of 0 -> True; 1 -> inWin; 2 -> not inWin; _ -> False
-      layerOk = case shLayer mainPx of
+{-# INLINE colorMath #-}
+colorMath :: Ctx -> Int -> Shown -> Maybe Shown -> Int
+colorMath c wins mainPx subPx =
+  let cgwsel = cCgwsel c
+      adsub = cAdsub c
+      fixed = cFixed c
+      inWin = testBit wins 5
+      -- CGWSEL bits 7-6 force the main screen black and 5-4 allow the maths:
+      -- 0 never / always, 1 and 2 outside or inside the maths window, 3
+      -- always / never
+      !black = case (cgwsel `shiftR` 6) .&. 3 of 0 -> False; 1 -> not inWin; 2 -> inWin; _ -> True
+      !allowed = case (cgwsel `shiftR` 4) .&. 3 of 0 -> True; 1 -> inWin; 2 -> not inWin; _ -> False
+      !layerOk = case shLayer mainPx of
         4 -> shObjMath mainPx && testBit adsub 4
         5 -> testBit adsub 5
         n -> testBit adsub n
-      mainC = if black then 0 else shColor mainPx
-      (subC, subIsBack) = case subPx of
-        Just s | shLayer s /= 5 -> (shColor s, False)
-        _ -> (fixed, True)
+      !mainC = if black then 0 else shColor mainPx
+      !subC = case subPx of
+        Just sp | shLayer sp /= 5 -> shColor sp
+        _ -> fixed
+      !subIsBack = case subPx of
+        Just sp | shLayer sp /= 5 -> False
+        _ -> True
       -- the half is not applied to the fixed colour as the sub screen's
       -- backdrop, nor on a forced-black main screen (fullsnes)
-      half = testBit adsub 6 && not black && not subIsBack
-  if not (layerOk && allowed) then pure mainC else do
-    let ch k = (mainC `shiftR` k) .&. 31
-        cs k = (subC `shiftR` k) .&. 31
-        op k = let r0 = if testBit adsub 7 then ch k - cs k else ch k + cs k
-                   r1 = if half then r0 `shiftR` 1 else r0
-               in max 0 (min 31 r1)
-    pure (op 0 .|. (op 5 `shiftL` 5) .|. (op 10 `shiftL` 10))
+      !half = testBit adsub 6 && not black && not subIsBack
+      !minus = testBit adsub 7
+      op k = mathChannel minus half ((mainC `unsafeShiftR` k) .&. 31) ((subC `unsafeShiftR` k) .&. 31)
+  in if not (layerOk && allowed) then mainC else op 0 .|. (op 5 `unsafeShiftL` 5) .|. (op 10 `unsafeShiftL` 10)
+
+-- | One colour channel's maths: the main screen's plus or minus the sub
+-- screen's, halved or not, clamped to 0-31. (Side track W: top level and
+-- inlined; as colorMath's local function it was a call per channel.)
+mathChannel :: Bool -> Bool -> Int -> Int -> Int
+mathChannel minus half ch cs =
+  let r0 = if minus then ch - cs else ch + cs
+      r1 = if half then r0 `unsafeShiftR` 1 else r0
+  in max 0 (min 31 r1)
+{-# INLINE mathChannel #-}
 
 -- | The PPU's own state for a save state (Q.8, "Platform.Snapshot"): its
 -- frame, the line's sprites, fetches, fine scroll and state; not VRAM,

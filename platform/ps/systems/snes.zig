@@ -6,6 +6,7 @@ const menu = @import("../menu.zig");
 const snes_cart = @import("snes_cart.zig");
 const state_board = @import("state_board.zig");
 const snes_state = @import("snes_state.zig");
+const snes_dsp = @import("snes_dsp.zig");
 
 /// The Super Nintendo (M7 step 7.11; snes.bit, Snes.Machine): the ROM
 /// file into DDR as the Game Gear's, then the header's facts as a word
@@ -18,6 +19,7 @@ pub const system: menu.System = .{
     .volume = true, // Platform.Audio.Volume in Snes.Machine
     .ddr_addr = 0x0200_0000, .ddr_info = .{ .addr = snes_cart.link_addr, .of = snes_cart.word },
     .check_ddr = snes_cart.checkDdr, // a chip cartridge refused (the header is past the first block)
+    .companion = snes_dsp.dsp1, // step 7.16d: the DSP-1's firmware (the user's dump) into DDR, for the DSP-1 bitstream
     .keys_hi = 0x16_0000, // pad 2: the key word's bits 16-27 (Snes.Machine)
     .save = .{
         .size = snes_cart.saveSize, .ram_addr = snes_cart.save_ram_addr, .read_addr = snes_cart.save_read_addr,
@@ -30,6 +32,7 @@ pub const system: menu.System = .{
 
 test {
     _ = snes_state;
+    _ = snes_dsp;
 }
 
 test "the row: ID 9, /snes, both file names" {

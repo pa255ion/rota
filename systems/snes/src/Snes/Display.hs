@@ -31,6 +31,15 @@ shows the ring's old one and is counted ('pcLate'), except while the
 machine is held (the menu, a load) and after it, or after reset, until
 the pace first holds the core back ('pcSettle': the core has caught up;
 a menu once lit the late LED for good).
+
+After a hold the core is not run on to catch up (at a master clock a
+pixel clock: a pause's or a save's frames came out 17% fast, the tone's
+pitch with them, step 7.15c): while held the output's frame count keeps
+level with the core's (the core in the output's frame, or a frame on when
+the output has passed it), so the core waits for the output to come round
+to it, and the picture stays black ('pcBlank') until the output's first
+frame start after the core has run again (the rows before it are the
+ring's old ones).
 -}
 module Snes.Display
   ( ringWrite
@@ -138,6 +147,8 @@ data Pace = Pace
   , pcFrac    :: Unsigned 12      -- ^ the fraction (of 1600; + 1364 reaches 2963)
   , pcLate    :: Unsigned 16      -- ^ rows shown late (saturating)
   , pcSettle  :: Bool             -- ^ not counting: held, or not caught up since
+  , pcBlank   :: Bool             -- ^ held, or since: black until a frame start after the core ran
+  , pcRan     :: Bool             -- ^ the core allowed to run since the hold ended
   } deriving stock (Show, Eq, Generic)
     deriving anyclass NFDataX
 
@@ -147,7 +158,7 @@ data Pace = Pace
 -- counting late rows until the core has caught up (in the 239-line mode
 -- the first frame's top rows come before the core can make them).
 paceInit :: Pace
-paceInit = Pace maxBound 0 0 0 True
+paceInit = Pace maxBound 0 0 0 True False False
 
 -- | A pixel clock: whether the master clock may run.
 paceStep :: Pace -> PaceIn -> (Pace, Bool)
@@ -158,7 +169,7 @@ paceStep s i = (s', run)
   -- the output's frame: a new one at its first pixel; 1364/1600 master
   -- clocks a pixel clock over its first 524 lines
   newFrame = vgaFrameStart o
-  frame' = if newFrame then pcFrame s + 1 else pcFrame s
+  frame1 = if newFrame then pcFrame s + 1 else pcFrame s
   (allowed0, frac0) = if newFrame then (0, 0) else (pcAllowed s, pcFrac s)
   giving = vgaY o < 524
   f1 = frac0 + (if giving then 1364 else 0)
@@ -167,6 +178,10 @@ paceStep s i = (s', run)
   -- or ahead (a frame on: only with the lead)
   corePos = resize (paV i) * lineMc + resize (paH i) :: Unsigned 20
   lead = leadMc + (if ov then 10230 else 0)
+  -- (held: the output's count level with the core's, the core in its
+  -- frame or, passed, a frame on: no catching up after)
+  frame' = if not (paHeld i) then frame1
+           else if corePos >= allowed' then paFrame i else paFrame i - 1
   rel = paFrame i - frame'
   run = case rel of
     0 -> corePos < allowed' + lead
@@ -183,4 +198,6 @@ paceStep s i = (s', run)
   late' = if rowStart && not done && not (pcSettle s) && pcLate s /= maxBound then pcLate s + 1 else pcLate s
   -- counting again once the pace holds the core back (it has caught up)
   settle' = paHeld i || (pcSettle s && run)
-  s' = Pace frame' allowed' frac' late' settle'
+  ran' = not (paHeld i) && (pcRan s || run)
+  blank' = paHeld i || (pcBlank s && not (newFrame && pcRan s))
+  s' = Pace frame' allowed' frac' late' settle' blank' ran'

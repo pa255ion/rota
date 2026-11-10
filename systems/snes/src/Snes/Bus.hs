@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -fconstraint-solver-iterations=0 #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE StrictData #-}
 {-|
 The 5A22 in Clash (PLAN.md step 7.9a; docs/systems/snes.md, "The machine
@@ -54,6 +55,10 @@ module Snes.Bus
   ) where
 
 import Clash.Prelude
+#ifdef SNES_DSP1
+import Snes.Upd77c25 (SnesAcc (..))
+import Data.Maybe (isJust)
+#endif
 
 import Snes.Ppu (Access (..))
 import W65c816.Core (Cpu (..), CpuIn (..), Req (..), BusOp (..), Kind (..), Stage (..), StepKind (..), cpuInit, cpuClock, coreW65c816)
@@ -162,11 +167,22 @@ data BusIn = BusIn
   , biApuReady1 :: Bool                  -- ^ the same with a tick this clock
   , biApuRead  :: Unsigned 8             -- ^ its port's value, the clock after the read
   , biDma      :: Vec 16 (Unsigned 8)    -- ^ the DMA registers of the channel 'boDmaRd' asked for last clock
+  , biOvlOn    :: Bool                   -- ^ a save state's ROM overlay is armed (step 7.15: its routine runs)
+  , biOvl      :: Unsigned 8             -- ^ its byte at last clock's 'boOvl'
+#ifdef SNES_DSP1
+  , biDspReady0 :: Bool                  -- ^ (the DSP-1 build) the chip has caught up (no tick this clock)
+  , biDspReady1 :: Bool                  -- ^ the same with a tick this clock
+  , biDspRead  :: Unsigned 8             -- ^ its DR's or SR's byte, the clock after the read
+#endif
   } deriving stock (Show, Eq, Generic)
     deriving anyclass (NFDataX, BitPack)
 
 busIdleIn :: CartCfg -> BusIn
-busIdleIn cfg = BusIn False cfg (repeat 0) 0 0 Nothing Nothing True True 0 (repeat 0xFF)
+#ifdef SNES_DSP1
+busIdleIn cfg = BusIn False cfg (repeat 0) 0 0 Nothing Nothing True True 0 (repeat 0xFF) False 0 True True 0
+#else
+busIdleIn cfg = BusIn False cfg (repeat 0) 0 0 Nothing Nothing True True 0 (repeat 0xFF) False 0
+#endif
 
 -- | The bus work for the lockstep tests (the spec's 'Snes.Spec.Machine.BusEvent').
 data BusEv
@@ -193,6 +209,10 @@ data BusOut = BusOut
   , boLineEnd :: Bool                            -- ^ a line ended
   , boEv      :: Maybe (Unsigned 32, BusEv)      -- ^ for the tests: the work and its master clock
   , boStep    :: Maybe StepKind                  -- ^ the CPU finished a step
+  , boOvl     :: Maybe (Unsigned 16)             -- ^ a read of the save state's overlay (its byte next clock: 'biOvl')
+#ifdef SNES_DSP1
+  , boDsp     :: Maybe SnesAcc                   -- ^ (the DSP-1 build) an access to its DR or SR (a read's byte next clock: 'biDspRead')
+#endif
   } deriving stock (Show, Eq, Generic)
     deriving anyclass (NFDataX, BitPack)
 
@@ -227,7 +247,10 @@ data FgStep
   deriving anyclass (NFDataX, BitPack)
 
 -- | Where a read's value comes from on the next clock.
-data Src = SrcNone | SrcNow | SrcWram | SrcSram | SrcRom | SrcPpu | SrcApu | SrcDma (Index 16)
+data Src = SrcNone | SrcNow | SrcWram | SrcSram | SrcRom | SrcPpu | SrcApu | SrcDma (Index 16) | SrcOvl
+#ifdef SNES_DSP1
+  | SrcDsp
+#endif
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFDataX, BitPack)
 
@@ -430,10 +453,25 @@ data Acc = Acc
   , aApu  :: Maybe (Unsigned 2, Maybe (Unsigned 8))
   , aDmaRd :: Maybe (Index 8)
   , aDmaW :: Maybe (Index 8, Index 16, Unsigned 8)
+  , aOvl  :: Maybe (Unsigned 16)  -- ^ a read of the save state's overlay (bank 00h's address)
+#ifdef SNES_DSP1
+  , aDsp  :: Maybe SnesAcc        -- ^ the DSP-1's DR or SR
+#endif
   }
 
 noAcc :: Acc
-noAcc = Acc Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+#ifdef SNES_DSP1
+noAcc = Acc Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+#else
+noAcc = Acc Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+#endif
+
+-- | An address the save state's overlay answers while armed: bank 00h,
+-- 0000h-1FFFh and 8000h-FFFFh.
+ovlAddr :: Unsigned 24 -> Bool
+ovlAddr a =
+  let off = resize a :: Unsigned 16
+  in a `shiftR` 16 == 0 && (off < 0x2000 || off >= 0x8000)
 
 -- | An A-bus address of the sound module's ports (2140h-217Fh in a system
 -- bank): its access waits until the module has caught up.
@@ -446,6 +484,27 @@ apuAddr a =
 apuReg :: Unsigned 8 -> Bool
 apuReg r = r >= 0x40 && r < 0x80
 
+#ifdef SNES_DSP1
+-- | (The DSP-1 build: "Snes.Spec.Map.dspWindow") the chip's DR (Just
+-- False) or SR (Just True) at an address of the cartridge's.
+dspWin :: CartCfg -> Unsigned 24 -> Maybe Bool
+dspWin cfg a = case ccMap cfg of
+  CmLoRom | b7 >= (if ccSram cfg > 0 then 0x20 else 0x30) && b7 < 0x40 && off >= 0x8000 -> Just (off >= 0xC000)
+  CmHiRom | b7 < 0x20 && off >= 0x6000 && off < 0x8000 -> Just (off >= 0x7000)
+  _ -> Nothing
+ where
+  b7 = resize (a `shiftR` 16) .&. 0x7F :: Unsigned 8
+  off = resize a :: Unsigned 16
+
+-- | Whether a request waits for the DSP-1 to catch up (exact, as the
+-- spec's: its access sees every instruction due by its master clock).
+waitsDsp :: CartCfg -> AReq -> Bool
+waitsDsp cfg q = case q of
+  RqReadA a -> isJust (dspWin cfg a)
+  RqWriteA a _ -> isJust (dspWin cfg a)
+  _ -> False
+#endif
+
 -- | Whether a request waits for the sound module.
 waitsApu :: AReq -> Bool
 waitsApu q = case q of
@@ -457,12 +516,20 @@ waitsApu q = case q of
 
 -- | The access unit: the one address decode, the registers' reads and
 -- writes. A read's value is there on the next clock ('rSrc').
-perform :: CartCfg -> Vec 2 (Unsigned 12) -> BusC -> AReq -> (BusC, Acc)
-perform cfg pads c q = case q of
+perform :: CartCfg -> Vec 2 (Unsigned 12) -> Bool -> BusC -> AReq -> (BusC, Acc)
+perform cfg pads ovlOn c q = case q of
   RqNone -> (c, noAcc)
   RqNow v -> (now c v, noAcc)
   RqReadB r -> readB c r
   RqWriteB r v -> writeB c r v
+  -- (a save state's overlay, armed: bank 00h's 0000h-1FFFh and
+  -- 8000h-FFFFh read from it, as "Snes.Spec.Machine"'s; its speed the
+  -- address's as always)
+  RqReadA a | ovlOn, ovlAddr a -> (from c SrcOvl, noAcc { aOvl = Just (resize a) })
+#ifdef SNES_DSP1
+  RqReadA a | Just sr <- dspWin cfg a -> (from c SrcDsp, noAcc { aDsp = Just (if sr then SReadSr else SReadDr) })
+  RqWriteA a v | Just sr <- dspWin cfg a -> (c, noAcc { aDsp = if sr then Nothing else Just (SWriteDr v) })
+#endif
   RqReadA a -> case decode cfg a of
     TWram o -> (from c SrcWram, noAcc { aWram = Just (o, Nothing) })
     TRom o -> (from c SrcRom, noAcc { aRom = Just o })
@@ -662,6 +729,10 @@ busClock c0 i = (cZ, out)
     SrcApu -> c0 { rVal = biApuRead i, rReady = True, rSrc = SrcNone }
     SrcPpu -> c0 { rVal = maybe (rMdr c0) id (maybe Nothing id (biPpuRead i)), rReady = True, rSrc = SrcNone }
     SrcDma k -> c0 { rVal = biDma i !! k, rReady = True, rSrc = SrcNone }
+    SrcOvl -> c0 { rVal = biOvl i, rReady = True, rSrc = SrcNone }
+#ifdef SNES_DSP1
+    SrcDsp -> c0 { rVal = biDspRead i, rReady = True, rSrc = SrcNone }
+#endif
     SrcRom -> case biRom i of
       Just v -> c0 { rVal = v, rReady = True, rSrc = SrcNone }
       Nothing -> c0
@@ -694,9 +765,14 @@ busClock c0 i = (cZ, out)
   st0 = case fStep c2 of
     FgNone -> bgStep c2
     _ -> fgStep c2
+#ifdef SNES_DSP1
+  dspOk = if ticked then biDspReady1 i else biDspReady0 i
+  st = if romWait c2 || (waitsApu (sReq st0) && not apuOk) || (waitsDsp cfg (sReq st0) && not dspOk) then stay c2 else st0
+#else
   st = if romWait c2 || (waitsApu (sReq st0) && not apuOk) then stay c2 else st0
+#endif
   -- the access unit
-  (c3a, acc) = perform cfg pads (sC st) (sReq st)
+  (c3a, acc) = perform cfg pads (biOvlOn i) (sC st) (sReq st)
   c3b = if sCpuRd st then (if rReady c3a then c3a { bCpuVal = rVal c3a, bCpuOk = True } else c3a { rCpu = True, bCpuOk = False }) else c3a
   -- a channel load asked for
   c3c = case sLoad st of
@@ -739,6 +815,10 @@ busClock c0 i = (cZ, out)
     , boLineEnd = lineEnd
     , boEv = sEv st
     , boStep = stepK
+    , boOvl = aOvl acc
+#ifdef SNES_DSP1
+    , boDsp = aDsp acc
+#endif
     }
 
 nmiLine, irqLine :: BusC -> Bool

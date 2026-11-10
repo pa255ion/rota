@@ -29,7 +29,22 @@ $(BUILD)/images/cart.bin: FORCE build/snes/ipl.bin
 CLASH_HEAVY = 1
 
 # The ROM in the harness's DDR (the media region).
+ifeq ($(SNES_CHIP),dsp1)
+# (the DSP-1 build, step 7.16d: the harness's DDR takes one file, so the
+# ROM and the chip's firmware go in as one image, the firmware at
+# 0x02700000 as the PS's companion puts it: Snes.Machine's dspFwBase;
+# SNES_DSP_FW, our own test firmware by default)
+SNES_DSP_FW ?= build/snes/asm/dsptest.rom
+HDL_PREREQ += $(BUILD)/images/ddr-dsp1.bin
+$(BUILD)/images/ddr-dsp1.bin: $(BUILD)/images/cart.bin $(SNES_DSP_FW)
+	cp $(BUILD)/images/rom.bin $@.part
+	truncate -s 7340032 $@.part
+	cat $(SNES_DSP_FW) >> $@.part
+	mv $@.part $@
+SIM_SYS_ARGS += --ddr-file 0x02000000=$(abspath $(BUILD)/images/ddr-dsp1.bin)
+else
 SIM_SYS_ARGS += --ddr-file 0x02000000=$(abspath $(BUILD)/images/rom.bin)
+endif
 
 # make sim compares its last frame with the ROM's golden, if there is one
 # (systems/snes/test/golden/vga/<rom>.png: the spec's 640 x 480 picture,
@@ -49,3 +64,19 @@ PS_APP        = relay
 # side track L's Game Boy did)
 CLASH_EXTRA = -fclash-spec-limit=100
 VERILATOR_EXTRA = +1364-2005ext+v
+
+# Step 7.15: how save states load. SNES_STATES=direct (the default, step
+# 7.14: the whole core's record written back as a chain), cpu (the
+# 65C816's restore routine from a ROM overlay, only the sound module's
+# record written back: fewer LUTs, docs/systems/snes.md), none (no state
+# hooks, as the ZedBoard's top)
+SNES_STATES ?= direct
+CLASH_EXTRA += $(if $(filter cpu,$(SNES_STATES)),-DSNES_STATES_CPU)$(if $(filter none,$(SNES_STATES)), -DSNES_STATES_NONE)
+
+# Step 7.16: an enhancement chip's bitstream, the base console plus the
+# chip (docs/systems/snes.md, "The DSP-1"). SNES_CHIP=none (the default)
+# or dsp1 (Snes.Dsp1: the µPD77C25, its firmware the SNES row's companion
+# in DDR at 0x02700000), with BUILD=build/arty-z7-20/snes-dsp1 beside the
+# default's.
+SNES_CHIP ?= none
+CLASH_EXTRA += $(if $(filter dsp1,$(SNES_CHIP)), -DSNES_DSP1)
